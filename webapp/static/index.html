@@ -157,6 +157,27 @@
 
     <div class="row">
       <div>
+        <label for="mode">Content mode</label>
+        <select id="mode">
+          <option value="plain" selected>Plain — faithful cleanup</option>
+          <option value="auto">Auto — let local AI decide</option>
+          <option value="article">Article — news &amp; blogs</option>
+          <option value="academic">Academic — papers, strips citations</option>
+          <option value="narrative">Narrative — novels &amp; stories</option>
+          <option value="study">Study — measured pace</option>
+        </select>
+      </div>
+      <div>
+        <label for="summarize" style="margin-bottom:10px">Summary</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400;color:var(--text);font-size:14px">
+          <input type="checkbox" id="summarize" style="width:auto;accent-color:var(--accent)">
+          Summarize first (~250 words, local AI)
+        </label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
         <label for="voice">Voice</label>
         <select id="voice">
           <optgroup label="Microsoft (online)">
@@ -403,6 +424,8 @@
     fd.append('engine', engine);
     fd.append('voice', voice);
     fd.append('speed', speed.value);
+    fd.append('mode', $('mode').value);
+    fd.append('summarize', $('summarize').checked ? 'true' : 'false');
 
     go.disabled = true;
     bar.style.width = '0%';
@@ -581,10 +604,13 @@
       if (s) { speed.value = s; speedval.textContent = Number(s).toFixed(2) + '×'; }
       const r = localStorage.getItem('tts:rate');
       if (r) { rate.value = r; rateval.textContent = Number(r).toFixed(2) + '×'; }
+      const m = localStorage.getItem('tts:mode');
+      if (m && [...$('mode').options].some(o => o.value === m)) $('mode').value = m;
     } catch (e) {}
   }
   const voiceSel = $('voice');
   voiceSel.addEventListener('change', () => { try { localStorage.setItem('tts:voice', voiceSel.value); } catch (e) {} });
+  $('mode').addEventListener('change', () => { try { localStorage.setItem('tts:mode', $('mode').value); } catch (e) {} });
   speed.addEventListener('change', () => { try { localStorage.setItem('tts:speed', speed.value); } catch (e) {} });
   rate.addEventListener('change', () => { try { localStorage.setItem('tts:rate', rate.value); } catch (e) {} });
 

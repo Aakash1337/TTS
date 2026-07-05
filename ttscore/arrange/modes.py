@@ -57,22 +57,70 @@ class Mode:
     pause_paragraph_ms: Optional[int] = None
 
 
+_ACADEMIC_PROMPT = (
+    "You are preparing an academic text to be read aloud by a text-to-speech "
+    "voice. Rewrite it so it reads naturally as continuous speech:\n"
+    "- Remove citation clutter: bracketed refs like [12], (Smith et al., 2020), "
+    "figure/table pointers like '(see Fig. 3)', and footnote markers.\n"
+    "- Drop reference lists, bibliographies, and acknowledgment boilerplate if "
+    "present.\n"
+    "- Spell out abbreviations that would be confusing aloud (e.g. 'e.g.' -> "
+    "'for example').\n"
+    "- Keep ALL substantive content, arguments, and results in their original "
+    "order. Do NOT summarize or editorialize.\n"
+    "Return ONLY the cleaned text, paragraphs separated by blank lines.\n\nTEXT:\n"
+)
+
+_NARRATIVE_PROMPT = (
+    "You are preparing fiction to be read aloud. Clean it up while treating the "
+    "prose as sacred:\n"
+    "- Fix broken line-wraps and stray formatting artifacts only.\n"
+    "- PRESERVE dialogue, punctuation, pacing, and every stylistic choice "
+    "exactly — do not rephrase, modernize, or summarize anything.\n"
+    "- Remove only non-story debris (page headers, translator notes, ads).\n"
+    "Return ONLY the cleaned text, paragraphs separated by blank lines.\n\nTEXT:\n"
+)
+
 MODES: dict[str, Mode] = {
     "plain": Mode(
         name="plain",
         description="Faithful cleanup: fix formatting, keep everything, minimal restructuring.",
     ),
-    # ── Additive later — no core changes, just uncomment/extend ──────────────
-    # "article":   Mode("article",   "News/blog: drop share cruft & citation noise.",
-    #                   strip_bracketed_refs=True),
-    # "academic":  Mode("academic",  "Papers: strip [12] refs & heading noise.",
-    #                   strip_bracketed_refs=True),
-    # "narrative": Mode("narrative", "Novels: more expressive voice, longer pauses.",
-    #                   exaggeration=0.7, pause_paragraph_ms=1000),
-    # "study":     Mode("study",     "Learning: measured pace, clearer pauses.",
-    #                   pause_sentence_ms=450, pause_paragraph_ms=900),
-    # "auto":      resolved by the LLM from a text sample -> one of the above.
+    "article": Mode(
+        name="article",
+        description="News/blog articles: also drop bracketed citation noise.",
+        strip_bracketed_refs=True,
+    ),
+    "academic": Mode(
+        name="academic",
+        description="Papers & textbooks: strip [12]/(Smith 2020) refs; LLM pass "
+                    "drops reference dumps; slightly clearer pacing.",
+        strip_bracketed_refs=True,
+        llm_prompt=_ACADEMIC_PROMPT,
+        pause_sentence_ms=380,
+    ),
+    "narrative": Mode(
+        name="narrative",
+        description="Novels & stories: keep every word, expressive voice, longer "
+                    "paragraph pauses; URLs/numbers left closer to the page.",
+        drop_urls=False,
+        expand_numbers=False,       # '1984' the novel should stay '1984'
+        llm_prompt=_NARRATIVE_PROMPT,
+        exaggeration=0.7,           # only affects engines with expressiveness (chatterbox)
+        pause_paragraph_ms=1000,
+    ),
+    "study": Mode(
+        name="study",
+        description="Learning: measured pace with clearer pauses between ideas.",
+        strip_bracketed_refs=True,
+        pause_sentence_ms=450,
+        pause_paragraph_ms=950,
+    ),
+    # "auto" is not a table entry: ttscore.arrange resolves it to one of the
+    # above by showing a local LLM a sample of the text (falls back to plain).
 }
+
+AUTO_CHOICES = ("article", "academic", "narrative", "study", "plain")
 
 
 def get_mode(name: str) -> Mode:

@@ -117,7 +117,8 @@ Defaults live in [`ttscore/config.py`](ttscore/config.py); copy
 
 | Knob | Default | Meaning |
 |---|---|---|
-| `mode` | `plain` | content profile (cleanup + narration style) |
+| `mode` | `plain` | `plain` \| `article` \| `academic` \| `narrative` \| `study` \| `auto` (local LLM picks) |
+| `summarize` | `false` | speak a ~250-word summary instead of the full text (local LLM) |
 | `use_llm` | `false` | optional local-LLM polish (Ollama) |
 | `llm_model` | `gemma4:e4b` | Ollama model tag for the polish pass |
 | `engine` | `chatterbox` | TTS engine (pluggable) |
@@ -129,22 +130,22 @@ Defaults live in [`ttscore/config.py`](ttscore/config.py); copy
 
 ---
 
-## Modes & the road ahead
+## Content modes & local AI
 
-A **mode** is a named profile = *rule toggles + optional LLM prompt + voice/pause
-settings*, defined in [`ttscore/arrange/modes.py`](ttscore/arrange/modes.py).
-MVP ships **`plain`**; the seam is built so these are purely additive later:
+A **mode** is a named profile = *rule toggles + optional LLM prompt + pacing*,
+defined in [`ttscore/arrange/modes.py`](ttscore/arrange/modes.py):
 
-- `academic` — handle `[12]` citations, headings, skip reference dumps
-- `article` — drop bylines / share cruft
-- `narrative` — expressive voice, longer pauses for novels/stories
-- `study` — measured pace, clearer pauses
-- `auto` — a local LLM reads a sample and picks the profile
+- `plain` — faithful cleanup (default)
+- `article` — news/blogs; drops bracketed citation noise
+- `academic` — papers; strips `[12]`/`[Smith 2020]` refs cleanly, steadier pace
+- `narrative` — novels/stories; keeps every word, numbers and URLs as written,
+  longer paragraph pauses, expressive voice on engines that support it
+- `study` — measured pace with clearer pauses
+- `auto` — a **local LLM** (Ollama + Gemma) reads a sample and picks for you
 
-Because the pipeline is an ordered list of optional stages, planned features
-(auto-summary, chapter splitting, translation) drop in without touching the core.
-A **web app** and later a **desktop app** are thin front-ends over this same
-`ttscore` package.
+Optional local-AI stages (never cloud, never required): `use_llm` polishes messy
+text through Gemma before speaking; `summarize` condenses long documents to a
+~250-word spoken summary (map-reduce over blocks).
 
 ---
 

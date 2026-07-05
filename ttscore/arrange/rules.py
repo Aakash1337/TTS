@@ -19,7 +19,8 @@ from .modes import Mode
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.I)
 _BRACKET_REF = re.compile(
-    r"\[\s*(?:\d+(?:\s*[,–-]\s*\d+)*"                 # [12]  [3-5]  [3, 4]
+    r"(?:\s*,)?\s*"                                    # eat a list comma: "[12], [34]"
+    r"\[\s*(?:\d+(?:\s*[,–-]\s*\d+)*"                  # [12]  [3-5]  [3, 4]
     r"|[A-Z][A-Za-z]+(?:\s+et\s+al\.?)?,?\s*\d{4}[a-z]?)\s*\]"  # [Smith 2020]
 )
 _MULTISPACE = re.compile(r"[ \t]{2,}")
@@ -63,7 +64,8 @@ def clean(text: str, mode: Mode, expand_numbers: bool) -> str:
     if mode.join_wrapped_lines:
         text = _join_wrapped(text)
     if mode.strip_bracketed_refs:
-        text = _BRACKET_REF.sub("", text)
+        text = _BRACKET_REF.sub(" ", text)
+        text = re.sub(r"\s+([,.;:!?])", r"\1", text)  # "effect ." -> "effect."
     if mode.drop_urls:
         text = _URL.sub("", text)
     if mode.replace_symbols:

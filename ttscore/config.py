@@ -56,6 +56,13 @@ class Config:
     llm_host: str = "http://localhost:11434"
     llm_timeout: float = 120.0
 
+    summarize: bool = False
+    """Speak a condensed summary instead of the full text (local LLM required;
+    the job fails with a clear message if Ollama is unreachable)."""
+
+    summary_words: int = 250
+    """Approximate length of the spoken summary."""
+
     # ── Ingest: web fetch ────────────────────────────────────────────────────
     request_timeout: float = 20.0
     user_agent: str = (
@@ -207,6 +214,8 @@ class Config:
             raise ValueError(f"speed must be in [0.5, 2.0], got {self.speed}")
         if self.ocr not in ("off", "auto", "force"):
             raise ValueError(f"ocr must be 'off', 'auto', or 'force', got {self.ocr!r}")
+        if self.summary_words < 50:
+            raise ValueError(f"summary_words must be >= 50, got {self.summary_words}")
         if self.cuda_mem_fraction is not None and not (0.0 < self.cuda_mem_fraction <= 1.0):
             raise ValueError(
                 f"cuda_mem_fraction must be in (0, 1.0], got {self.cuda_mem_fraction}")

@@ -68,6 +68,7 @@ class JobResult:
     title: str = ""                  # human title (article/PDF title) when known
     mode: str = "plain"
     used_llm: bool = False
+    summarized: bool = False
     chars_in: int = 0                # characters of raw ingested text
     chars_spoken: int = 0            # characters actually sent to the engine
     n_chunks: int = 0

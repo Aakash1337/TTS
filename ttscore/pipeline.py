@@ -57,8 +57,8 @@ def run(sources: list[Source], cfg: Config, progress=None) -> RunReport:
     ``progress`` is an optional callable ``progress(done, total)`` invoked as
     chunks are synthesized (used by the web UI for a live progress bar)."""
     cfg.validate()
-    mode = get_mode(cfg.mode)
-    cfg = _apply_mode_overrides(cfg, mode)
+    if cfg.mode != "auto":   # 'auto' is resolved per-source once the text is read
+        cfg = _apply_mode_overrides(cfg, get_mode(cfg.mode))
 
     run_id = new_run_id()
     log, log_file = setup_logging(cfg.log_path, run_id)
@@ -126,12 +126,38 @@ def process_source(src: Source, cfg: Config, engine: Optional[TTSEngine],
     if not raw.strip():
         raise ValueError("No text to speak (empty input).")
 
+    # 1b. 'auto' mode: let the local LLM pick a profile from a text sample
+    #     (voice-expressiveness overrides can't apply here — the engine is
+    #     already loaded — but cleanup toggles and pause pacing all do).
+    if cfg.mode == "auto":
+        from .arrange import llm as _llm
+        resolved = _llm.classify(raw, cfg) or "plain"
+        cfg = _apply_mode_overrides(cfg.merged_with({"mode": resolved}),
+                                    get_mode(resolved))
+        result.mode = resolved
+        log.info("auto mode -> %s", resolved)
+
     # 2. arrange
     text, used_llm = arrange(raw, cfg)
-    result.used_llm = used_llm
-    result.chars_spoken = len(text)
     if not text.strip():
         raise ValueError("Nothing left to speak after cleanup.")
+
+    # 2b. optional auto-summary (local LLM; hard-fails if it's unreachable —
+    #     silently reading the full text is not what the user asked for)
+    if cfg.summarize:
+        if len(text.split()) <= cfg.summary_words * 1.3:
+            log.info("Summary requested but the text is already ~summary length "
+                     "(%d words) — reading it in full.", len(text.split()))
+        else:
+            from .arrange import llm as _llm
+            log.info("Summarizing to ~%d words via %s ...", cfg.summary_words, cfg.llm_model)
+            text = _llm.summarize(text, cfg)
+            result.summarized = True
+            used_llm = True
+            log.info("  summary: %d chars", len(text))
+
+    result.used_llm = used_llm
+    result.chars_spoken = len(text)
 
     # 3. chunk
     chunks = chunk_text(text, cfg)
@@ -347,6 +373,7 @@ def _write_meta(out_path: Path, result: JobResult, engine, src: Source) -> None:
         "title": result.title or out_path.stem,
         "source": src.label[:200],
         "kind": src.kind,
+        "mode": result.mode + (" (summary)" if result.summarized else ""),
         "audio_seconds": round(result.audio_seconds, 1),
         "voice": getattr(engine, "model_id", "unknown"),
         "created": datetime.now().isoformat(timespec="seconds"),

@@ -44,7 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--format", choices=KNOWN_FORMATS, help="audio format")
 
     arr = p.add_argument_group("arrange")
-    arr.add_argument("--mode", help="content profile (MVP: 'plain')")
+    arr.add_argument("--mode",
+                     help="content profile: plain|article|academic|narrative|study|auto")
+    arr.add_argument("--summarize", action="store_true", default=None,
+                     help="speak a condensed summary instead of the full text (local LLM)")
+    arr.add_argument("--summary-words", dest="summary_words", type=int,
+                     help="approximate summary length in words")
     arr.add_argument("--llm", dest="use_llm", action="store_true", default=None,
                      help="polish text through the local Ollama LLM")
     arr.add_argument("--no-llm", dest="use_llm", action="store_false",
@@ -119,6 +124,8 @@ def make_config(args: argparse.Namespace) -> Config:
         "output_dir": args.output_dir,
         "use_llm": args.use_llm,
         "llm_model": args.llm_model,
+        "summarize": args.summarize,
+        "summary_words": args.summary_words,
         "seed": args.seed,
         "exaggeration": args.exaggeration,
         "cfg_weight": args.cfg_weight,

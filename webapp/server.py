@@ -62,12 +62,16 @@ async def generate(
     voice: str = Form("en-US-AriaNeural"),
     engine: str = Form("edge"),                # "edge" | "chatterbox"
     speed: float = Form(1.0),
+    mode: str = Form("plain"),                 # plain|article|academic|narrative|study|auto
+    summarize: str = Form("false"),
     file: Optional[UploadFile] = File(None),
 ) -> JSONResponse:
     cfg = _base_cfg().merged_with({
         "engine": engine,
         "edge_voice": voice,
         "speed": max(0.5, min(2.0, float(speed))),
+        "mode": mode,
+        "summarize": str(summarize).lower() in ("true", "1", "on", "yes"),
     })
 
     _sweep_stale_previews()
