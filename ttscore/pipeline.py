@@ -164,6 +164,8 @@ def process_source(src: Source, cfg: Config, engine: Optional[TTSEngine],
     chunk_words: list = []            # per chunk: list of {"t","s","e"} or None
     n_generated = 0
     total = len(chunks)
+    preview_written = False
+    accum_secs = 0.0
     if progress:
         progress(0, total)
     for i, ch in enumerate(tqdm(chunks, desc=out_path.stem[:28], unit="chunk", leave=False)):
@@ -186,8 +188,25 @@ def process_source(src: Source, cfg: Config, engine: Optional[TTSEngine],
         clips.append(audio.resample(clip_native, native_sr, cfg.sample_rate))
         para_ends.append(ch.paragraph_end)
         chunk_words.append(words)
+        accum_secs += clips[-1].shape[0] / cfg.sample_rate
         if progress:
             progress(i + 1, total)
+
+        # Early preview: once enough audio exists (and more is coming), encode
+        # the prefix so the app can start playback while the rest generates.
+        # The prefix is bit-identical in timing to the final track's start, so
+        # the player can swap to the full file without losing its position.
+        if (not preview_written and cfg.preview_seconds
+                and accum_secs >= cfg.preview_seconds and i + 1 < total
+                # a post-encode speed change would desync preview vs final
+                and (getattr(engine, "handles_speed", False)
+                     or abs(cfg.speed - 1.0) < 1e-3)):
+            try:
+                _write_preview(clips, para_ends, out_path, cfg)
+                preview_written = True
+            except Exception as exc:   # a failed preview must never fail the job
+                log.warning("preview encode failed (continuing): %s", exc)
+                preview_written = True  # don't retry every chunk
     result.n_generated = n_generated
 
     # 5. assemble
@@ -297,6 +316,26 @@ def _write_output(track, text: str, out_path: Path, cfg: Config,
         txt_path = out_path.with_suffix(".txt")
         if txt_path != out_path:  # never clobber the audio with the transcript
             txt_path.write_text(text, encoding="utf-8")
+
+
+def preview_path_for(out_path: Path) -> Path:
+    return out_path.with_name(out_path.stem + ".preview.mp3")
+
+
+def _write_preview(clips, para_ends, out_path: Path, cfg: Config) -> None:
+    """Assemble + encode the current prefix to ``<out>.preview.mp3``."""
+    track, _ = audio.assemble(clips, para_ends, cfg.sample_rate,
+                              cfg.pause_sentence_ms, cfg.pause_paragraph_ms)
+    track = audio.finalize(track)
+    tmp_wav = out_path.with_name(out_path.stem + ".preview.raw.wav")
+    audio.write_wav(tmp_wav, track, cfg.sample_rate)
+    try:
+        ffmpeg_utils.encode(tmp_wav, preview_path_for(out_path), cfg)
+    finally:
+        try:
+            tmp_wav.unlink()
+        except OSError:
+            pass
 
 
 def _write_meta(out_path: Path, result: JobResult, engine, src: Source) -> None:

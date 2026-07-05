@@ -25,7 +25,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ttscore.config import Config
-from ttscore.pipeline import Source, run
+from ttscore.pipeline import Source, preview_path_for, run
 
 ROOT = Path(__file__).resolve().parents[1]          # E:\TTS
 STATIC = Path(__file__).resolve().parent / "static"
@@ -70,6 +70,7 @@ async def generate(
         "speed": max(0.5, min(2.0, float(speed))),
     })
 
+    _sweep_stale_previews()
     job_id = uuid.uuid4().hex[:12]
     out_path = OUTPUT_DIR / f"web_{job_id}.mp3"
     upload_dir: Optional[Path] = None   # per-job dir, removed after the run
@@ -107,7 +108,8 @@ async def generate(
         title_fallback = "Pasted text"
 
     JOBS[job_id] = {"status": "queued", "done": 0, "total": 0,
-                    "output": None, "error": None, "title": None, "audio_seconds": 0.0}
+                    "output": None, "out_path": str(out_path),
+                    "error": None, "title": None, "audio_seconds": 0.0}
     _prune_jobs()
     threading.Thread(target=_run_job,
                      args=(job_id, src, cfg, upload_dir, title_fallback),
@@ -130,10 +132,24 @@ def status(job_id: str) -> JSONResponse:
     job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(404, "unknown job")
-    public = {k: v for k, v in job.items() if k != "output"}
+    public = {k: v for k, v in job.items() if k not in ("output", "out_path")}
     public["has_audio"] = bool(job.get("output"))
     public["has_timings"] = bool(job.get("output")) and _timings_path(job).is_file()
+    public["has_preview"] = (job["status"] == "running"
+                             and preview_path_for(Path(job["out_path"])).is_file())
     return JSONResponse(public)
+
+
+@app.get("/api/preview/{job_id}")
+def preview(job_id: str):
+    """The first ~25s of a still-generating narration."""
+    job = JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "unknown job")
+    p = preview_path_for(Path(job["out_path"]))
+    if not p.is_file():
+        raise HTTPException(404, "preview not ready")
+    return FileResponse(str(p), media_type="audio/mpeg")
 
 
 @app.get("/api/timings/{job_id}")
@@ -238,6 +254,7 @@ def _base_cfg() -> Config:
         log_dir=str(ROOT / "logs"),
         keep_wav=False,          # web jobs: don't leave a 5-10x raw .wav per MP3
         write_transcript=False,  # nor a .txt the browser user never sees
+        preview_seconds=25.0,    # start listening while long docs still generate
     )
 
 
@@ -280,10 +297,27 @@ def _run_job(job_id: str, src: Source, cfg: Config,
 def _cleanup_job_dirs(job_id: str, upload_dir: Optional[Path], cfg: Config) -> None:
     """Web jobs are one-shot: the uploaded PDF and the per-job chunk cache
     (keyed by the unique web_<id> stem, so it can never be re-hit) are garbage
-    once the run ends — remove both."""
+    once the run ends — remove both, plus the early-listen preview file (the
+    client swaps to the final audio the moment the job reports done)."""
     for d in (upload_dir, Path(cfg.cache_dir) / f"web_{job_id}"):
         if d is not None:
             shutil.rmtree(d, ignore_errors=True)
+    try:
+        preview_path_for(OUTPUT_DIR / f"web_{job_id}.mp3").unlink(missing_ok=True)
+    except OSError:
+        pass  # may be mid-download on Windows; the stale sweep will get it
+
+
+def _sweep_stale_previews() -> None:
+    """Previews are transient; clear any left behind by crashes/locks."""
+    import time
+    cutoff = time.time() - 2 * 3600
+    for p in OUTPUT_DIR.glob("*.preview.mp3"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            pass
 
 
 def _safe_name(name: str) -> str:

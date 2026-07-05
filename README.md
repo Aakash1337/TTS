@@ -74,6 +74,13 @@ replay (with read-along), download, or delete past narrations. Long audio
 **Ebooks:** drop an **.epub** on the file tab (or `--text-file book.epub` in the
 CLI) — chapters are read in order with proper paragraph pauses.
 
+**Start listening immediately:** on long documents, playback begins with a
+preview as soon as ~25 s of audio exists; when generation finishes, the player
+swaps to the full file without losing your place.
+
+**Contents:** long narrations get a ☰ Contents list (one entry per paragraph/
+section with its timestamp) — click to jump the audio there.
+
 ## Usage
 
 ```powershell

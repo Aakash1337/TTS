@@ -128,6 +128,11 @@ class Config:
     """Write ``<output>.words.json`` word-level timings when the engine reports
     them (edge voices do). Powers the read-along highlighting in the app."""
 
+    preview_seconds: Optional[float] = None
+    """When set (the web app uses ~25), encode ``<output>.preview.mp3`` as soon
+    as this many seconds of audio exist, so listening can start while the rest
+    of a long document is still generating. None = off (CLI default)."""
+
     # ── Runtime ──────────────────────────────────────────────────────────────
     overwrite: bool = False     # if False, skip when the output already exists
     dry_run: bool = False       # ingest + arrange + chunk, but generate no audio

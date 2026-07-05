@@ -80,6 +80,13 @@
   }
   .ra-text.show { display: block; }
   .ra-text p { margin: 0 0 14px; }
+  .contents { display: none; margin-top: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+  .contents.show { display: block; }
+  .contents summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600; user-select: none; }
+  #contentslist { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+  .citem { padding: 6px 8px; font-size: 13.5px; color: var(--muted); cursor: pointer; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .citem:hover { background: var(--card2); color: var(--text); }
+  .citem .ct { color: var(--accent2); font-size: 12px; margin-right: 8px; }
   .ra-w { cursor: pointer; border-radius: 4px; padding: 0 1px; }
   .ra-w:hover { background: #39406a; }
   .ra-w.hl { background: var(--accent); color: #201200; }
@@ -188,6 +195,10 @@
         <label for="rate">Playback speed <span class="speedval" id="rateval">1.00×</span></label>
         <input type="range" id="rate" min="0.5" max="2" step="0.05" value="1">
       </div>
+      <details class="contents" id="contents">
+        <summary>☰ Contents</summary>
+        <div id="contentslist"></div>
+      </details>
       <div class="ra-text" id="ratext"></div>
       <a class="dl" id="download" download>⬇ Download MP3</a>
     </div>
@@ -268,10 +279,15 @@
     try { player.preservesPitch = true; } catch (e) {}
   });
 
+  const contents = $('contents'), contentslist = $('contentslist');
+
   function raReset() {
     raWords = []; raLast = -1;
     ratext.innerHTML = '';
     ratext.classList.remove('show');
+    contentslist.innerHTML = '';
+    contents.classList.remove('show');
+    contents.open = false;
     if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; }
   }
 
@@ -285,7 +301,40 @@
     } catch (e) { /* no timings -> plain player */ }
   }
 
+  function fmtClock(s) {
+    s = Math.max(0, Math.round(s));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  function buildContents(data) {
+    // One entry per paragraph start (first chunk, or chunk after a para break).
+    const entries = [];
+    data.chunks.forEach((ch, i) => {
+      const isStart = i === 0 || data.chunks[i - 1].para;
+      if (isStart && ch.words && ch.words.length) {
+        entries.push({ label: ch.text.split(/\s+/).slice(0, 8).join(' '), t: ch.words[0].s });
+      }
+    });
+    if (entries.length < 2) return;   // nothing worth navigating
+    for (const e of entries) {
+      const div = document.createElement('div');
+      div.className = 'citem';
+      const ts = document.createElement('span');
+      ts.className = 'ct'; ts.textContent = fmtClock(e.t);
+      div.appendChild(ts);
+      div.appendChild(document.createTextNode(e.label + '…'));
+      div.addEventListener('click', () => {
+        player.currentTime = Math.max(0, e.t + 0.02);
+        player.play().catch(() => {});
+      });
+      contentslist.appendChild(div);
+    }
+    contents.querySelector('summary').textContent = `☰ Contents (${entries.length} sections)`;
+    contents.classList.add('show');
+  }
+
   function buildReadAlong(data) {
+    buildContents(data);
     let p = document.createElement('p');
     for (const ch of data.chunks) {
       let cursor = 0;
@@ -336,6 +385,8 @@
     player.pause();                 // stop any previous narration still sounding
     result.classList.remove('show');
     raReset();
+    previewActive = false;
+    pendingSeek = null;
     const fd = new FormData();
     fd.append('input_type', currentTab);
     if (currentTab === 'text') {
@@ -389,15 +440,19 @@
       if (s.total > 0) {
         const pct = Math.round(100 * s.done / s.total);
         bar.style.width = pct + '%';
-        setStatus(`Generating audio… ${s.done} / ${s.total} chunks (${pct}%)`, false);
+        setStatus(`Generating audio… ${s.done} / ${s.total} chunks (${pct}%)`
+                  + (previewActive ? ' — preview playing' : ''), false);
       } else {
         setStatus('Reading & preparing text…', false);
       }
+      if (s.has_preview && !previewActive) startPreview(id);
       setTimeout(() => poll(id), 1000);
     } else if (s.status === 'done') {
       bar.style.width = '100%';
       const secs = Math.round(s.audio_seconds || 0);
       setStatus(`Done — ${Math.floor(secs / 60)}m ${secs % 60}s of audio.`, false);
+      if (previewActive) pendingSeek = player.currentTime;   // keep the spot
+      previewActive = false;
       showAudio('/api/audio/' + id, s.title, s.has_timings ? '/api/timings/' + id : null);
       refreshLibrary();
       finishRun();
@@ -409,6 +464,18 @@
   }
 
   let currentAudioUrl = null;   // key for per-file resume positions
+  let previewActive = false;    // playing the early preview of a running job
+  let pendingSeek = null;       // position to restore right after a src swap
+
+  function startPreview(id) {
+    previewActive = true;
+    currentAudioUrl = '/api/audio/' + id;   // save positions under the FINAL key
+    player.src = '/api/preview/' + id;
+    player.playbackRate = Number(rate.value);
+    resultTitle.textContent = '🎧 Preview — you can start listening while the rest generates…';
+    result.classList.add('show');
+    player.play().catch(() => {});
+  }
 
   function showAudio(audioUrl, title, timingsUrl) {
     currentAudioUrl = audioUrl;
@@ -431,6 +498,11 @@
     if (now - lastPosSave > 3000) { lastPosSave = now; try { localStorage.setItem(k, String(player.currentTime)); } catch (e) {} }
   });
   player.addEventListener('loadedmetadata', () => {
+    if (pendingSeek != null) {              // seamless preview -> final swap
+      player.currentTime = pendingSeek;
+      pendingSeek = null;
+      return;
+    }
     const k = posKey();
     if (!k) return;
     const saved = parseFloat(localStorage.getItem(k) || '0');
