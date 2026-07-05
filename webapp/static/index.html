@@ -87,6 +87,19 @@
   .citem { padding: 6px 8px; font-size: 13.5px; color: var(--muted); cursor: pointer; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .citem:hover { background: var(--card2); color: var(--text); }
   .citem .ct { color: var(--accent2); font-size: 12px; margin-right: 8px; }
+  #dublog {
+    display: none; margin-top: 10px; max-height: 220px; overflow-y: auto;
+    background: #0b0e1a; border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; font-size: 12px; line-height: 1.5; color: #9fb0d8;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  #dublog.show { display: block; }
+  #dubcancel { display: none; }
+  #dubcancel.show { display: inline-block; }
+  .dubpair { display: flex; gap: 8px; align-items: center; padding: 6px 8px;
+             border-top: 1px solid var(--line); font-size: 13.5px; }
+  .dubpair .k { color: var(--accent2); font-weight: 700; min-width: 60px; }
+  .dubpair .done { color: var(--ok); font-size: 12px; margin-left: auto; }
   .ra-w { cursor: pointer; border-radius: 4px; padding: 0 1px; }
   .ra-w:hover { background: #39406a; }
   .ra-w.hl { background: var(--accent); color: #201200; }
@@ -135,6 +148,7 @@
       <div class="tab active" data-tab="text">Paste text</div>
       <div class="tab" data-tab="url">Web link</div>
       <div class="tab" data-tab="pdf">PDF / EPUB</div>
+      <div class="tab" data-tab="dub">Dub videos</div>
     </div>
 
     <div class="pane active" data-pane="text">
@@ -155,7 +169,35 @@
       <div class="hint">Ebooks (.epub) and PDFs — including scanned/image-only PDFs, which are read by OCR automatically.</div>
     </div>
 
-    <div class="row">
+    <div class="pane" data-pane="dub">
+      <div class="hint" style="margin-bottom:10px">
+        Replaces the foreign audio in a folder of videos with an English AI voiceover,
+        using each video's subtitles (drives the AI-Dubbing project). Uses the GPU heavily.
+      </div>
+      <button class="libbtn" id="dubscan" type="button">🔍 Scan for videos &amp; subtitles</button>
+      <div id="dubpairs" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label for="dubonly">Only these episodes (blank = all)</label>
+          <input type="text" id="dubonly" placeholder="e.g. 01 02 bonus01">
+        </div>
+        <div>
+          <label for="dubcues">Preview: first N cues only (blank = full)</label>
+          <input type="text" id="dubcues" placeholder="e.g. 15 for a fast sample">
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer;font-weight:400;color:var(--text);font-size:14px">
+        <input type="checkbox" id="duboverwrite" style="width:auto;accent-color:var(--accent)">
+        Re-dub even if the output already exists
+      </label>
+      <button class="btn" id="dubstart" type="button">Start dubbing</button>
+      <button class="cancel" id="dubcancel" type="button">✕ Cancel dubbing</button>
+      <div class="statustext" id="dubstatus" style="margin-top:10px"></div>
+      <div id="dubouts" style="margin-top:6px"></div>
+      <pre id="dublog"></pre>
+    </div>
+
+    <div class="row gen-only">
       <div>
         <label for="mode">Content mode</label>
         <select id="mode">
@@ -176,7 +218,7 @@
       </div>
     </div>
 
-    <div class="row">
+    <div class="row gen-only">
       <div>
         <label for="voice">Voice</label>
         <select id="voice">
@@ -201,7 +243,7 @@
       </div>
     </div>
 
-    <button class="btn" id="go">Generate audio</button>
+    <button class="btn gen-only" id="go">Generate audio</button>
 
     <div class="status" id="status">
       <div class="bar"><i id="barfill"></i></div>
@@ -242,6 +284,8 @@
     currentTab = t.dataset.tab;
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.dataset.pane === currentTab));
+    // the voice/mode/generate controls belong to narration, not dubbing
+    document.querySelectorAll('.gen-only').forEach(el => el.style.display = currentTab === 'dub' ? 'none' : '');
   }));
 
   const speed = $('speed'), speedval = $('speedval');
@@ -613,6 +657,80 @@
   $('mode').addEventListener('change', () => { try { localStorage.setItem('tts:mode', $('mode').value); } catch (e) {} });
   speed.addEventListener('change', () => { try { localStorage.setItem('tts:speed', speed.value); } catch (e) {} });
   rate.addEventListener('change', () => { try { localStorage.setItem('tts:rate', rate.value); } catch (e) {} });
+
+  // ── dub tab: drive the AI-Dubbing pipeline ────────────────────────────────
+  const dubstatusEl = $('dubstatus'), dublog = $('dublog'), dubouts = $('dubouts');
+  let dubPolling = false;
+
+  $('dubscan').addEventListener('click', async () => {
+    $('dubscan').disabled = true;
+    $('dubpairs').innerHTML = '<div class="libempty">Scanning…</div>';
+    try {
+      const r = await fetch('/api/dub/scan', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || 'scan failed');
+      const box = $('dubpairs'); box.innerHTML = '';
+      (j.pairs || []).forEach(p => {
+        const d = document.createElement('div'); d.className = 'dubpair';
+        d.innerHTML = '<span class="k"></span><span class="v"></span><span class="done"></span>';
+        d.querySelector('.k').textContent = p.key;
+        d.querySelector('.v').textContent = p.video;
+        d.querySelector('.done').textContent = p.already_dubbed ? '✓ dubbed' : '';
+        box.appendChild(d);
+      });
+      (j.warnings || []).forEach(w => {
+        const d = document.createElement('div'); d.className = 'hint';
+        d.textContent = '⚠ ' + w; box.appendChild(d);
+      });
+      if (!(j.pairs || []).length) box.innerHTML = '<div class="libempty">No video/subtitle pairs found.</div>';
+    } catch (e) { $('dubpairs').innerHTML = '<div class="libempty">Scan failed: ' + e.message + '</div>'; }
+    $('dubscan').disabled = false;
+  });
+
+  $('dubstart').addEventListener('click', async () => {
+    const fd = new FormData();
+    fd.append('only', $('dubonly').value);
+    fd.append('max_cues', $('dubcues').value);
+    fd.append('overwrite', $('duboverwrite').checked ? 'true' : 'false');
+    $('dubstart').disabled = true;
+    dubstatusEl.textContent = 'Starting…';
+    try {
+      const r = await fetch('/api/dub/start', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || 'start failed');
+      $('dubcancel').classList.add('show');
+      dubPolling = true;
+      pollDub();
+    } catch (e) { dubstatusEl.textContent = 'Failed to start: ' + e.message; $('dubstart').disabled = false; }
+  });
+
+  $('dubcancel').addEventListener('click', async () => {
+    dubstatusEl.textContent = 'Cancelling…';
+    try { await fetch('/api/dub/cancel', { method: 'POST' }); } catch (e) {}
+  });
+
+  async function pollDub() {
+    if (!dubPolling) return;
+    let s;
+    try { s = await (await fetch('/api/dub/status')).json(); }
+    catch (e) { return setTimeout(pollDub, 2500); }
+    const n = (s.new_outputs || []).length;
+    dubstatusEl.textContent =
+      s.status === 'running' ? `Dubbing… ${n} video(s) finished so far. This can take a while — each video is voiced line by line.` :
+      s.status === 'done' ? `Done — ${n} video(s) dubbed (in E:\\AI-Dubbing\\output).` :
+      s.status === 'cancelled' ? 'Cancelled.' :
+      s.status === 'failed' ? `Failed (exit ${s.exit}) — see the log below.` : '';
+    dubouts.innerHTML = '';
+    (s.new_outputs || []).forEach(o => {
+      const d = document.createElement('div'); d.className = 'dubpair';
+      d.innerHTML = '<span class="k">✓</span><span></span>';
+      d.children[1].textContent = `${o.name} (${o.mb} MB)`;
+      dubouts.appendChild(d);
+    });
+    if (s.log_tail) { dublog.textContent = s.log_tail; dublog.classList.add('show'); dublog.scrollTop = dublog.scrollHeight; }
+    if (s.status === 'running') setTimeout(pollDub, 2000);
+    else { dubPolling = false; $('dubstart').disabled = false; $('dubcancel').classList.remove('show'); }
+  }
 
   restoreSettings();
   refreshLibrary();

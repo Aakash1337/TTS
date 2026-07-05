@@ -12,8 +12,10 @@ from — outputs always land under the project root (E:\\TTS\\output).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import subprocess
 import threading
 import uuid
 from datetime import datetime
@@ -247,6 +249,131 @@ def library_delete(stem: str) -> JSONResponse:
             (OUTPUT_DIR / f"{stem}{ext}").unlink(missing_ok=True)
         except OSError:
             pass
+    return JSONResponse({"ok": True})
+
+
+# ── Dub: drive the AI-Dubbing project (its own venv, via subprocess) ─────────
+# The dubbing pipeline lives in a sibling project with a separately-pinned
+# environment; running it as a subprocess keeps the two dependency stacks
+# fully isolated while giving it a UI here.
+DUB_ROOT = Path(os.environ.get("AI_DUBBING_ROOT", r"E:\AI-Dubbing"))
+DUB_PY = DUB_ROOT / ".venv" / "Scripts" / "python.exe"
+
+DUB: dict = {"status": "idle", "proc": None, "log": None, "started": None,
+             "baseline": [], "exit": None}
+_DUB_LOCK = threading.Lock()
+
+# Matches inside logger lines like:
+#   "21:38:47  INFO       [01]  01 Understanding Art.m4v  <->  [EN]Mogoon_01.srt"
+_PAIR_LINE = re.compile(r"\[(?P<key>[^\]]+)\]\s+(?P<video>.+?)\s+<->\s+(?P<srt>.+?)\s*$")
+
+
+def _dub_available() -> bool:
+    return DUB_PY.is_file() and (DUB_ROOT / "dub.py").is_file()
+
+
+@app.post("/api/dub/scan")
+def dub_scan() -> JSONResponse:
+    """Dry-run the dubbing pipeline to list video<->subtitle pairs."""
+    if not _dub_available():
+        raise HTTPException(404, f"AI-Dubbing project not found at {DUB_ROOT}.")
+    proc = subprocess.run(
+        [str(DUB_PY), "dub.py", "--config", "config.yaml", "--dry-run"],
+        cwd=str(DUB_ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=180,
+    )
+    text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    pairs, warnings = [], []
+    for line in text.splitlines():
+        m = _PAIR_LINE.search(line) if "<->" in line else None
+        if m:
+            pairs.append({"key": m.group("key"), "video": m.group("video"),
+                          "srt": m.group("srt")})
+        elif "no subtitle for video" in line or "no video for subtitle" in line:
+            warnings.append(line.strip())
+    done = {p.name for p in (DUB_ROOT / "output").glob("*.mp4")} if (DUB_ROOT / "output").is_dir() else set()
+    for p in pairs:
+        p["already_dubbed"] = Path(p["video"]).stem + ".mp4" in done
+    return JSONResponse({"pairs": pairs, "warnings": warnings,
+                         "input_dir": str(DUB_ROOT)})
+
+
+@app.post("/api/dub/start")
+async def dub_start(only: str = Form(""), max_cues: str = Form(""),
+                    overwrite: str = Form("false")) -> JSONResponse:
+    if not _dub_available():
+        raise HTTPException(404, f"AI-Dubbing project not found at {DUB_ROOT}.")
+    with _DUB_LOCK:
+        if DUB["proc"] is not None and DUB["proc"].poll() is None:
+            raise HTTPException(409, "A dubbing run is already in progress.")
+
+        cmd = [str(DUB_PY), "dub.py", "--config", "config.yaml"]
+        keys = [k for k in re.split(r"[,\s]+", only.strip()) if k]
+        if keys:
+            cmd += ["--only", *keys]
+        if max_cues.strip().isdigit():
+            cmd += ["--max-cues", max_cues.strip()]
+        if str(overwrite).lower() in ("true", "1", "on", "yes"):
+            cmd += ["--overwrite"]
+
+        log_dir = ROOT / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"dub_{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+        out_dir = DUB_ROOT / "output"
+        baseline = [p.name for p in out_dir.glob("*.mp4")] if out_dir.is_dir() else []
+
+        fh = open(log_path, "wb")
+        DUB.update({
+            "status": "running",
+            "proc": subprocess.Popen(cmd, cwd=str(DUB_ROOT), stdout=fh, stderr=fh,
+                                     creationflags=subprocess.CREATE_NO_WINDOW),
+            "log": str(log_path),
+            "started": datetime.now().isoformat(timespec="seconds"),
+            "baseline": baseline,
+            "exit": None,
+        })
+    return JSONResponse({"ok": True, "cmd": " ".join(cmd)})
+
+
+@app.get("/api/dub/status")
+def dub_status() -> JSONResponse:
+    proc = DUB.get("proc")
+    if proc is not None and DUB["status"] == "running" and proc.poll() is not None:
+        DUB["exit"] = proc.returncode
+        DUB["status"] = "done" if proc.returncode == 0 else "failed"
+
+    new_outputs = []
+    out_dir = DUB_ROOT / "output"
+    if out_dir.is_dir():
+        base = set(DUB.get("baseline") or [])
+        for p in sorted(out_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime):
+            if p.name not in base:
+                new_outputs.append({"name": p.name,
+                                    "mb": round(p.stat().st_size / 1e6, 1)})
+
+    tail = ""
+    if DUB.get("log"):
+        try:
+            with open(DUB["log"], "rb") as fh:
+                fh.seek(max(0, os.path.getsize(DUB["log"]) - 4000))
+                tail = fh.read().decode("utf-8", errors="replace")
+        except OSError:
+            pass
+
+    return JSONResponse({"status": DUB["status"], "exit": DUB.get("exit"),
+                         "started": DUB.get("started"),
+                         "new_outputs": new_outputs, "log_tail": tail})
+
+
+@app.post("/api/dub/cancel")
+def dub_cancel() -> JSONResponse:
+    proc = DUB.get("proc")
+    if proc is None or proc.poll() is not None:
+        raise HTTPException(409, "No dubbing run in progress.")
+    # Kill the whole tree (dub.py may have a transient ffmpeg child).
+    subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                   capture_output=True)
+    DUB["status"] = "cancelled"
     return JSONResponse({"ok": True})
 
 
