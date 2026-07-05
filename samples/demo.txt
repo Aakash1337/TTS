@@ -1,0 +1,16 @@
+# The Nature of Curiosity
+
+Curiosity is often described as the engine of learning. When we encoun-
+ter something we don't understand, a small tension forms in the mind, and
+that tension seeks resolution.
+
+Researchers have found that curious people retain roughly 30% more of
+what they read. See https://example.com/curiosity for the full study.
+
+* It sharpens attention.
+* It improves memory.
+* It makes the work feel lighter.
+
+In 1984, a psychologist named George Loewenstein framed this as an "inform-
+ation gap" — the space between what we already know and what we want to know.
+The gap is uncomfortable, and that discomfort is exactly what pulls us forward.

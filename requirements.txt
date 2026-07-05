@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TTS Reader — text/URL -> cleaned narration -> speech
+#
+# IMPORTANT (PyTorch + CUDA):
+#   `chatterbox-tts` pulls in a specific torch/torchaudio build. For GPU use,
+#   install the CUDA wheels FIRST (matching your CUDA), THEN the rest. On the
+#   RTX 4080 box this targets (CUDA 12.x):
+#
+#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#     pip install -r requirements.txt
+#
+#   CPU-only fallback: `pip install torch torchaudio` then this file.
+#   See setup.ps1 / README.md for the full, tested flow.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core TTS engine (Resemble AI, MIT) ───────────────────────────────────────
+# Pinned to the version the AI Dubbing pipeline was verified against; the loader
+# introspects generate() so newer versions degrade gracefully. Relax to taste.
+chatterbox-tts==0.1.7
+
+# Torch is a transitive dep of chatterbox-tts, listed for clarity. Install the
+# CUDA build via the index-url above for GPU acceleration.
+torch
+torchaudio
+
+# ── Audio I/O + math ──────────────────────────────────────────────────────────
+soundfile>=0.12.1
+numpy
+
+# ── Alternative engine: Microsoft online neural voices (free, no key, online) ─
+edge-tts>=6.1.0
+
+# ── Ingest: web article extraction ────────────────────────────────────────────
+trafilatura>=1.8.0        # main-content extraction (drops nav/ads/boilerplate)
+readability-lxml>=0.8.1   # fallback extractor
+requests>=2.31.0          # HTTP fetch with our own headers/timeouts
+pymupdf>=1.24.0           # PDF text extraction (+ page rasterization for OCR)
+
+# ── OCR for image-only PDFs is OPTIONAL and heavy — install on demand: ────────
+#   E:\TTS\.venv\Scripts\python.exe -m pip install easyocr
+
+# ── Arrange: text cleanup for natural speech ──────────────────────────────────
+pysbd>=0.3.4              # sentence boundary detection (handles Dr./U.S./e.g.)
+num2words>=0.5.13         # 1984 -> "nineteen eighty-four", $5 -> "five dollars"
+
+# ── Optional local LLM cleanup (Ollama / Gemma) ───────────────────────────────
+ollama>=0.3.0            # client for the local Ollama server; optional at runtime
+
+# ── Web app (Phase 3) — light, pure-python; included so setup is one-shot ─────
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# ── Config + CLI niceties ─────────────────────────────────────────────────────
+PyYAML>=6.0
+tqdm>=4.66.0

@@ -1,0 +1,41 @@
+# TTS Reader — annotated config. Copy to config.yaml and edit.
+# Resolution order: these defaults < this YAML (--config) < CLI flags.
+
+# ── Output paths (relative to the project root, E:\TTS) ──────────────────────
+# The project lives on E: (214 GB free), so relative paths already land there.
+# Model weights auto-download to E:\TTS\models (project-local HF cache).
+output_dir: output           # finished audio (+ optional .wav / transcript)
+cache_dir:  cache            # per-chunk clip cache (crash-resume)
+log_dir:    logs             # per-run logs
+
+# ── Arrange: cleanup / structuring ────────────────────────────────────────────
+mode: plain                # content profile (MVP ships 'plain')
+expand_numbers: true       # speak digits/currency/percent as words
+use_llm: false             # optional local-LLM polish (Ollama). Rules always run.
+llm_model: gemma4:e4b      # your Ollama tag (also have: e2b, 26b, 31b)
+llm_host: http://localhost:11434
+
+# ── Chunking ──────────────────────────────────────────────────────────────────
+max_chunk_chars: 300       # sentence-aligned; never splits mid-sentence
+
+# ── TTS engine (pluggable) ────────────────────────────────────────────────────
+engine: chatterbox
+reference_wav: null        # 5-10s .wav to clone as the narrator; null = built-in
+exaggeration: 0.5          # Chatterbox expressiveness
+cfg_weight: 0.5            # Chatterbox pacing
+temperature: 0.8
+seed: null                 # set an int for reproducible audio
+device: cuda               # 'cuda' | 'cpu' (auto-falls back to cpu)
+
+# ── Assembly ──────────────────────────────────────────────────────────────────
+sample_rate: 44100
+channels: 1                # narration is mono by nature
+pause_sentence_ms: 300     # gap between sentences/chunks
+pause_paragraph_ms: 700    # longer gap at paragraph breaks
+
+# ── Loudness / encoding ───────────────────────────────────────────────────────
+loudnorm_i: -16.0
+audio_format: mp3          # 'mp3' | 'wav' | 'm4a'
+audio_bitrate: 128k
+keep_wav: true             # also keep the raw pre-encode .wav
+write_transcript: true     # write the exact spoken text as .txt

@@ -1,0 +1,22 @@
+# ── Environment / runtime (heavy, machine-specific) ─────────────────────────
+.venv/
+# HuggingFace cache — Chatterbox weights (~2 GB) download on first run
+models/
+pip-tmp/
+__pycache__/
+*.pyc
+
+# ── Generated content + caches + logs ───────────────────────────────────────
+output/
+cache/
+.tts_cache/
+.uploads/
+logs/
+*.preview.mp3
+
+# ── Local machine config ─────────────────────────────────────────────────────
+config.yaml
+.claude/
+
+# ── Downloaded third-party sample (copyrighted; not ours to redistribute) ────
+samples/fall_of_a_sparrow.pdf

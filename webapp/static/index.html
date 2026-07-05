@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTS Reader</title>
+<style>
+  :root {
+    --bg: #0f1220; --card: #1a1f35; --card2: #232a45; --line: #333c60;
+    --text: #eef1f8; --muted: #9aa3c4; --accent: #f7913a; --accent2: #ffb066;
+    --ok: #47c07a; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: radial-gradient(1200px 600px at 70% -10%, #2a1e46, transparent), var(--bg);
+    color: var(--text); display: flex; justify-content: center; padding: 32px 16px;
+  }
+  .wrap { width: 100%; max-width: 720px; }
+  header { text-align: center; margin-bottom: 22px; }
+  header h1 { margin: 0; font-size: 30px; letter-spacing: -0.5px; }
+  header p { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab {
+    flex: 1; padding: 10px; text-align: center; border-radius: 10px; cursor: pointer;
+    background: var(--card2); border: 1px solid transparent; color: var(--muted); font-weight: 600; font-size: 14px;
+    user-select: none; transition: .15s;
+  }
+  .tab.active { color: #fff; border-color: var(--accent); background: #2a2140; }
+  .tab:hover { color: var(--text); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  textarea, input[type=text], input[type=url], select {
+    width: 100%; background: var(--card2); border: 1px solid var(--line); border-radius: 10px;
+    color: var(--text); padding: 12px; font-size: 15px; font-family: inherit; outline: none;
+  }
+  textarea { min-height: 180px; resize: vertical; line-height: 1.5; }
+  textarea:focus, input:focus, select:focus { border-color: var(--accent); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+  .filebox {
+    border: 1.5px dashed var(--line); border-radius: 10px; padding: 26px; text-align: center;
+    color: var(--muted); background: var(--card2); cursor: pointer;
+  }
+  .filebox.has-file { border-color: var(--accent); color: var(--text); }
+  .row { display: flex; gap: 16px; margin-top: 16px; }
+  .row > div { flex: 1; }
+  .speedval { color: var(--accent2); font-weight: 700; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .btn {
+    margin-top: 20px; width: 100%; padding: 14px; border: none; border-radius: 12px; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #201200; font-weight: 800; font-size: 16px;
+    transition: .15s;
+  }
+  .btn:hover { filter: brightness(1.06); }
+  .btn:disabled { opacity: .55; cursor: default; filter: none; }
+  .status { margin-top: 18px; display: none; }
+  .status.show { display: block; }
+  .bar { height: 10px; background: var(--card2); border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+  .bar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .3s; }
+  .statustext { margin-top: 8px; font-size: 14px; color: var(--muted); }
+  .statustext.err { color: var(--err); }
+  .cancel {
+    margin-top: 10px; display: none; padding: 8px 14px; border-radius: 8px; cursor: pointer;
+    background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 600;
+  }
+  .cancel.show { display: inline-block; }
+  .cancel:hover { border-color: var(--err); color: var(--err); }
+  .result { margin-top: 18px; display: none; background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .result.show { display: block; }
+  .result h3 { margin: 0 0 10px; font-size: 15px; }
+  audio { width: 100%; }
+  .ra-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .ra-controls label { margin: 0; white-space: nowrap; }
+  .ra-controls input[type=range] { flex: 1; }
+  .ra-text {
+    display: none; margin-top: 12px; max-height: 340px; overflow-y: auto;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; line-height: 1.95; font-size: 16px; scroll-behavior: smooth;
+  }
+  .ra-text.show { display: block; }
+  .ra-text p { margin: 0 0 14px; }
+  .ra-w { cursor: pointer; border-radius: 4px; padding: 0 1px; }
+  .ra-w:hover { background: #39406a; }
+  .ra-w.hl { background: var(--accent); color: #201200; }
+  .dl { display: inline-block; margin-top: 12px; color: var(--accent2); text-decoration: none; font-weight: 600; font-size: 14px; }
+  .dl:hover { text-decoration: underline; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .lib { margin-top: 18px; }
+  .libhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .libhead h2 { margin: 0; font-size: 17px; }
+  .libhead button {
+    background: var(--card2); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
+  }
+  .libhead button:hover { color: var(--text); border-color: var(--accent); }
+  .librow {
+    display: flex; align-items: center; gap: 10px; padding: 10px 8px;
+    border-top: 1px solid var(--line); cursor: pointer;
+  }
+  .librow:hover { background: var(--card2); border-radius: 8px; }
+  .libinfo { flex: 1; min-width: 0; }
+  .libtitle { font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .libmeta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .libbtn {
+    background: transparent; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; flex-shrink: 0;
+  }
+  .libbtn:hover { color: var(--text); border-color: var(--accent); }
+  .libbtn.del:hover { color: var(--err); border-color: var(--err); }
+  .libempty { color: var(--muted); font-size: 14px; padding: 12px 4px; }
+  @media (max-width: 540px) {
+    body { padding: 16px 10px; }
+    .card { padding: 16px; }
+    .row { flex-direction: column; gap: 12px; }   /* stack voice + speed on phones */
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🎧 TTS Reader</h1>
+    <p>Paste text, drop a link, or upload a PDF — hear it read aloud.</p>
+  </header>
+
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" data-tab="text">Paste text</div>
+      <div class="tab" data-tab="url">Web link</div>
+      <div class="tab" data-tab="pdf">PDF / EPUB</div>
+    </div>
+
+    <div class="pane active" data-pane="text">
+      <label for="text">Text to read</label>
+      <textarea id="text" placeholder="Paste an article, a chapter, notes — anything…"></textarea>
+    </div>
+
+    <div class="pane" data-pane="url">
+      <label for="url">Web page or PDF link</label>
+      <input type="url" id="url" placeholder="https://example.com/article">
+      <div class="hint">Works on article pages and direct PDF links. JS-only sites may not extract.</div>
+    </div>
+
+    <div class="pane" data-pane="pdf">
+      <label>PDF or EPUB file</label>
+      <div class="filebox" id="filebox">Click to choose a PDF or EPUB (or drag one here)</div>
+      <input type="file" id="file" accept=".pdf,.epub,application/pdf,application/epub+zip" style="display:none">
+      <div class="hint">Ebooks (.epub) and text-layer PDFs work instantly; image-only scans need OCR (CLI only for now).</div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="voice">Voice</label>
+        <select id="voice">
+          <optgroup label="Microsoft (online)">
+            <option value="edge:en-US-AriaNeural" selected>Aria — US English (default)</option>
+            <option value="edge:en-US-JennyNeural">Jenny — US English</option>
+            <option value="edge:en-US-MichelleNeural">Michelle — US English</option>
+            <option value="edge:en-US-GuyNeural">Guy — US English (male)</option>
+            <option value="edge:en-US-RogerNeural">Roger — US English (male)</option>
+            <option value="edge:en-GB-SoniaNeural">Sonia — British English</option>
+            <option value="edge:en-GB-RyanNeural">Ryan — British English (male)</option>
+            <option value="edge:en-AU-NatashaNeural">Natasha — Australian English</option>
+          </optgroup>
+          <optgroup label="Local (offline, GPU)">
+            <option value="chatterbox:">Chatterbox — offline</option>
+          </optgroup>
+        </select>
+      </div>
+      <div>
+        <label for="speed">Speed <span class="speedval" id="speedval">1.00×</span></label>
+        <input type="range" id="speed" min="0.5" max="2" step="0.05" value="1">
+      </div>
+    </div>
+
+    <button class="btn" id="go">Generate audio</button>
+
+    <div class="status" id="status">
+      <div class="bar"><i id="barfill"></i></div>
+      <div class="statustext" id="statustext">Starting…</div>
+      <button class="cancel" id="cancel" type="button">✕ Cancel</button>
+    </div>
+
+    <div class="result" id="result">
+      <h3 id="resulttitle">Your audio</h3>
+      <audio id="player" controls></audio>
+      <div class="ra-controls">
+        <label for="rate">Playback speed <span class="speedval" id="rateval">1.00×</span></label>
+        <input type="range" id="rate" min="0.5" max="2" step="0.05" value="1">
+      </div>
+      <div class="ra-text" id="ratext"></div>
+      <a class="dl" id="download" download>⬇ Download MP3</a>
+    </div>
+  </div>
+
+  <div class="card lib" id="libcard" style="display:none">
+    <div class="libhead">
+      <h2>📚 Library</h2>
+      <button id="librefresh" type="button">↻ Refresh</button>
+    </div>
+    <div id="liblist"></div>
+  </div>
+</div>
+
+<script>
+  let currentTab = 'text';
+  const $ = (id) => document.getElementById(id);
+
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    currentTab = t.dataset.tab;
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.dataset.pane === currentTab));
+  }));
+
+  const speed = $('speed'), speedval = $('speedval');
+  speed.addEventListener('input', () => speedval.textContent = Number(speed.value).toFixed(2) + '×');
+
+  const fileInput = $('file'), filebox = $('filebox');
+  filebox.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files[0];
+    filebox.textContent = f ? '📄 ' + f.name : 'Click to choose a PDF (or drag one here)';
+    filebox.classList.toggle('has-file', !!f);
+  });
+  ['dragover', 'dragleave', 'drop'].forEach(ev => filebox.addEventListener(ev, e => {
+    e.preventDefault();
+    if (ev === 'drop' && e.dataTransfer.files[0]) {
+      const f = e.dataTransfer.files[0];
+      if (!/\.(pdf|epub)$/i.test(f.name)) { setStatus('Please drop a .pdf or .epub file.', true); return; }
+      fileInput.files = e.dataTransfer.files;
+      fileInput.dispatchEvent(new Event('change'));
+    }
+  }));
+
+  const go = $('go'), statusBox = $('status'), bar = $('barfill'), statusText = $('statustext');
+  const result = $('result'), player = $('player'), download = $('download'), resultTitle = $('resulttitle');
+  const cancelBtn = $('cancel');
+  let currentJob = null, pollFailures = 0;
+
+  function setStatus(msg, isErr) {
+    statusBox.classList.add('show');
+    statusText.textContent = msg;
+    statusText.classList.toggle('err', !!isErr);
+  }
+
+  function finishRun() {
+    go.disabled = false;
+    cancelBtn.classList.remove('show');
+    currentJob = null;
+  }
+
+  cancelBtn.addEventListener('click', () => {
+    if (!currentJob) return;
+    cancelBtn.disabled = true;
+    fetch('/api/cancel/' + currentJob, { method: 'POST' }).catch(() => {}).finally(() => { cancelBtn.disabled = false; });
+    setStatus('Cancelling…', false);
+  });
+
+  // ── read-along: word highlighting synced to the audio ──────────────────────
+  const ratext = $('ratext'), rate = $('rate'), rateval = $('rateval');
+  let raWords = [];      // [{el, s, e}] in document order
+  let raLast = -1, raLoop = null;
+
+  rate.addEventListener('input', () => {
+    const v = Number(rate.value);
+    rateval.textContent = v.toFixed(2) + '×';
+    player.playbackRate = v;                       // applies LIVE while reading
+    try { player.preservesPitch = true; } catch (e) {}
+  });
+
+  function raReset() {
+    raWords = []; raLast = -1;
+    ratext.innerHTML = '';
+    ratext.classList.remove('show');
+    if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; }
+  }
+
+  async function loadReadAlong(url) {
+    raReset();
+    try {
+      const r = await fetch(url);
+      if (!r.ok) return;
+      buildReadAlong(await r.json());
+      ratext.classList.add('show');
+    } catch (e) { /* no timings -> plain player */ }
+  }
+
+  function buildReadAlong(data) {
+    let p = document.createElement('p');
+    for (const ch of data.chunks) {
+      let cursor = 0;
+      for (const w of (ch.words || [])) {
+        if (w.cs > cursor) p.appendChild(document.createTextNode(ch.text.slice(cursor, w.cs)));
+        const span = document.createElement('span');
+        span.className = 'ra-w';
+        span.textContent = ch.text.slice(w.cs, w.ce);
+        span.addEventListener('click', () => {       // click a word -> jump there
+          player.currentTime = Math.max(0, w.s + 0.02);
+          player.play().catch(() => {});
+        });
+        p.appendChild(span);
+        raWords.push({ el: span, s: w.s, e: w.e });
+        cursor = w.ce;
+      }
+      if (cursor < ch.text.length) p.appendChild(document.createTextNode(ch.text.slice(cursor)));
+      p.appendChild(document.createTextNode(' '));
+      if (ch.para) { ratext.appendChild(p); p = document.createElement('p'); }
+    }
+    if (p.childNodes.length) ratext.appendChild(p);
+  }
+
+  function raTick() {
+    if (raWords.length) {
+      const t = player.currentTime;
+      let lo = 0, hi = raWords.length - 1, idx = -1;
+      while (lo <= hi) { const m = (lo + hi) >> 1; if (raWords[m].s <= t) { idx = m; lo = m + 1; } else hi = m - 1; }
+      if (idx !== raLast) {
+        if (raLast >= 0) raWords[raLast].el.classList.remove('hl');
+        if (idx >= 0) {
+          const el = raWords[idx].el;
+          el.classList.add('hl');
+          const r = el.getBoundingClientRect(), br = ratext.getBoundingClientRect();
+          if (r.top < br.top + 24 || r.bottom > br.bottom - 24) el.scrollIntoView({ block: 'center' });
+        }
+        raLast = idx;
+      }
+    }
+    raLoop = requestAnimationFrame(raTick);
+  }
+  player.addEventListener('play',   () => { if (!raLoop) raTick(); });
+  player.addEventListener('pause',  () => { if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; } });
+  player.addEventListener('ended',  () => { if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; } });
+  player.addEventListener('seeked', () => { if (!raLoop) { raTick(); cancelAnimationFrame(raLoop); raLoop = null; } });
+
+  async function generate() {
+    player.pause();                 // stop any previous narration still sounding
+    result.classList.remove('show');
+    raReset();
+    const fd = new FormData();
+    fd.append('input_type', currentTab);
+    if (currentTab === 'text') {
+      if (!$('text').value.trim()) return setStatus('Please paste some text first.', true);
+      fd.append('text', $('text').value);
+    } else if (currentTab === 'url') {
+      if (!$('url').value.trim()) return setStatus('Please enter a link first.', true);
+      fd.append('url', $('url').value.trim());
+    } else {
+      if (!fileInput.files[0]) return setStatus('Please choose a PDF first.', true);
+      fd.append('file', fileInput.files[0]);
+    }
+    const [engine, voice] = $('voice').value.split(':');
+    fd.append('engine', engine);
+    fd.append('voice', voice);
+    fd.append('speed', speed.value);
+
+    go.disabled = true;
+    bar.style.width = '0%';
+    setStatus('Reading & preparing text…', false);
+
+    let res, job_id;
+    try {
+      res = await fetch('/api/generate', { method: 'POST', body: fd });
+      if (!res.ok) { go.disabled = false; const j = await res.json().catch(() => ({})); return setStatus('Error: ' + (j.detail || res.statusText), true); }
+      ({ job_id } = await res.json());
+    } catch (e) { go.disabled = false; return setStatus('Could not reach the server.', true); }
+    currentJob = job_id;
+    pollFailures = 0;
+    cancelBtn.classList.add('show');
+    poll(job_id);
+  }
+
+  async function poll(id) {
+    let s;
+    try {
+      s = await (await fetch('/api/status/' + id)).json();
+      pollFailures = 0;
+    } catch (e) {
+      if (++pollFailures > 20) {           // ~30s of failures -> give up cleanly
+        setStatus('Lost connection to the server. Is it still running?', true);
+        return finishRun();
+      }
+      return setTimeout(() => poll(id), 1500);
+    }
+
+    if (s.status === 'queued') {
+      setStatus('Queued…', false);
+      setTimeout(() => poll(id), 1000);
+    } else if (s.status === 'running') {
+      if (s.total > 0) {
+        const pct = Math.round(100 * s.done / s.total);
+        bar.style.width = pct + '%';
+        setStatus(`Generating audio… ${s.done} / ${s.total} chunks (${pct}%)`, false);
+      } else {
+        setStatus('Reading & preparing text…', false);
+      }
+      setTimeout(() => poll(id), 1000);
+    } else if (s.status === 'done') {
+      bar.style.width = '100%';
+      const secs = Math.round(s.audio_seconds || 0);
+      setStatus(`Done — ${Math.floor(secs / 60)}m ${secs % 60}s of audio.`, false);
+      showAudio('/api/audio/' + id, s.title, s.has_timings ? '/api/timings/' + id : null);
+      refreshLibrary();
+      finishRun();
+    } else {
+      const msg = (s.error || 'unknown error');
+      setStatus(/^Cancelled/i.test(msg) ? 'Cancelled.' : 'Failed: ' + msg, /^Cancelled/i.test(msg) ? false : true);
+      finishRun();
+    }
+  }
+
+  let currentAudioUrl = null;   // key for per-file resume positions
+
+  function showAudio(audioUrl, title, timingsUrl) {
+    currentAudioUrl = audioUrl;
+    player.src = audioUrl;
+    player.playbackRate = Number(rate.value);   // keep the live-speed setting
+    download.href = audioUrl;
+    resultTitle.textContent = title ? '🎧 ' + title : 'Your audio';
+    result.classList.add('show');
+    if (timingsUrl) loadReadAlong(timingsUrl); else raReset();
+    player.play().catch(() => {});
+  }
+
+  // ── resume where you left off (per file, localStorage) ────────────────────
+  const posKey = () => currentAudioUrl ? 'ttspos:' + currentAudioUrl : null;
+  let lastPosSave = 0;
+  player.addEventListener('timeupdate', () => {
+    const k = posKey();
+    if (!k || player.currentTime < 5) return;
+    const now = Date.now();
+    if (now - lastPosSave > 3000) { lastPosSave = now; try { localStorage.setItem(k, String(player.currentTime)); } catch (e) {} }
+  });
+  player.addEventListener('loadedmetadata', () => {
+    const k = posKey();
+    if (!k) return;
+    const saved = parseFloat(localStorage.getItem(k) || '0');
+    if (saved > 10 && player.duration && saved < player.duration - 15) {
+      player.currentTime = saved;
+      const m = Math.floor(saved / 60), s = Math.round(saved % 60);
+      setStatus(`Resumed from ${m}:${String(s).padStart(2, '0')} — click the first word to start over.`, false);
+    }
+  });
+  player.addEventListener('ended', () => {
+    const k = posKey();
+    if (k) try { localStorage.removeItem(k); } catch (e) {}
+  });
+
+  // ── library ────────────────────────────────────────────────────────────────
+  const libcard = $('libcard'), liblist = $('liblist');
+
+  function fmtSecs(s) {
+    if (s == null) return '';
+    s = Math.round(s);
+    return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+  }
+
+  async function refreshLibrary() {
+    let data;
+    try { data = await (await fetch('/api/library')).json(); }
+    catch (e) { return; }
+    const items = data.items || [];
+    libcard.style.display = 'block';
+    liblist.innerHTML = '';
+    if (!items.length) {
+      liblist.innerHTML = '<div class="libempty">Nothing here yet — generate your first narration above.</div>';
+      return;
+    }
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = 'librow';
+      const info = document.createElement('div');
+      info.className = 'libinfo';
+      const bits = [fmtSecs(it.seconds), (it.created || '').slice(0, 10),
+                    it.has_timings ? 'read-along' : ''].filter(Boolean).join(' · ');
+      info.innerHTML = `<div class="libtitle"></div><div class="libmeta">${bits}</div>`;
+      info.querySelector('.libtitle').textContent = it.title;
+      const play = document.createElement('button');
+      play.className = 'libbtn'; play.textContent = '▶ Play'; play.type = 'button';
+      const dl = document.createElement('a');
+      dl.className = 'libbtn'; dl.textContent = '⬇'; dl.title = 'Download';
+      dl.href = '/api/library/audio/' + encodeURIComponent(it.stem); dl.setAttribute('download', '');
+      const del = document.createElement('button');
+      del.className = 'libbtn del'; del.textContent = '✕'; del.title = 'Delete'; del.type = 'button';
+
+      const playIt = () => showAudio(
+        '/api/library/audio/' + encodeURIComponent(it.stem), it.title,
+        it.has_timings ? '/api/library/timings/' + encodeURIComponent(it.stem) : null);
+      row.addEventListener('click', playIt);
+      [play, dl, del].forEach(b => b.addEventListener('click', e => e.stopPropagation()));
+      play.addEventListener('click', playIt);
+      del.addEventListener('click', async () => {
+        if (!confirm(`Delete "${it.title}"?`)) return;
+        try { await fetch('/api/library/' + encodeURIComponent(it.stem), { method: 'DELETE' }); } catch (e) {}
+        refreshLibrary();
+      });
+
+      row.appendChild(info); row.appendChild(play); row.appendChild(dl); row.appendChild(del);
+      liblist.appendChild(row);
+    }
+  }
+  $('librefresh').addEventListener('click', refreshLibrary);
+
+  // ── remembered settings (voice, generation speed, playback speed) ─────────
+  function restoreSettings() {
+    try {
+      const v = localStorage.getItem('tts:voice');
+      if (v && [...voiceSel.options].some(o => o.value === v)) voiceSel.value = v;
+      const s = localStorage.getItem('tts:speed');
+      if (s) { speed.value = s; speedval.textContent = Number(s).toFixed(2) + '×'; }
+      const r = localStorage.getItem('tts:rate');
+      if (r) { rate.value = r; rateval.textContent = Number(r).toFixed(2) + '×'; }
+    } catch (e) {}
+  }
+  const voiceSel = $('voice');
+  voiceSel.addEventListener('change', () => { try { localStorage.setItem('tts:voice', voiceSel.value); } catch (e) {} });
+  speed.addEventListener('change', () => { try { localStorage.setItem('tts:speed', speed.value); } catch (e) {} });
+  rate.addEventListener('change', () => { try { localStorage.setItem('tts:rate', rate.value); } catch (e) {} });
+
+  restoreSettings();
+  refreshLibrary();
+
+  go.addEventListener('click', generate);
+</script>
+</body>
+</html>
