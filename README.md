@@ -181,6 +181,9 @@ ttscore/
 
 - **ffmpeg** is only needed for `mp3`/`m4a`; `audio_format: wav` skips it.
 - **GPU**: Chatterbox auto-falls back to CPU (slow) if CUDA is unavailable.
+- **Scanned PDFs**: with `easyocr` installed (see requirements.txt — mind the
+  torch-reinstall warning), image-only pages are OCR'd on the GPU. The app does
+  this automatically; the CLI needs `--ocr auto`.
 - **LLM cleanup** is optional and local — if Ollama isn't running, the tool logs
   a warning and uses the rule-cleaned text.
 - Chatterbox stamps an inaudible Perth watermark on its output by design.

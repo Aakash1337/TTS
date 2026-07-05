@@ -25,7 +25,8 @@ torchaudio
 
 # ── Audio I/O + math ──────────────────────────────────────────────────────────
 soundfile>=0.12.1
-numpy
+# chatterbox-tts is verified against numpy 1.x; easyocr tries to drag in 2.x.
+numpy<2
 
 # ── Alternative engine: Microsoft online neural voices (free, no key, online) ─
 edge-tts>=6.1.0
@@ -38,6 +39,12 @@ pymupdf>=1.24.0           # PDF text extraction (+ page rasterization for OCR)
 
 # ── OCR for image-only PDFs is OPTIONAL and heavy — install on demand: ────────
 #   E:\TTS\.venv\Scripts\python.exe -m pip install easyocr
+#
+# WARNING (learned the hard way): plain `pip install easyocr` SILENTLY REPLACES
+# the CUDA torch build with a CPU-only one and upgrades numpy past 2.0, breaking
+# Chatterbox GPU. After installing easyocr, ALWAYS re-run:
+#   pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+#   pip install "numpy<2"
 
 # ── Arrange: text cleanup for natural speech ──────────────────────────────────
 pysbd>=0.3.4              # sentence boundary detection (handles Dr./U.S./e.g.)

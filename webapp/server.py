@@ -259,6 +259,7 @@ def _base_cfg() -> Config:
         keep_wav=False,          # web jobs: don't leave a 5-10x raw .wav per MP3
         write_transcript=False,  # nor a .txt the browser user never sees
         preview_seconds=25.0,    # start listening while long docs still generate
+        ocr="auto",              # scanned/image-only PDF pages OCR automatically
     )
 
 

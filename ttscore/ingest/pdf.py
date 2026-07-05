@@ -130,7 +130,13 @@ def _ocr_page(page, cfg: Config) -> str:
         return ""
     if _ocr_reader is None:
         langs = [s.strip() for s in cfg.ocr_language.split(",") if s.strip()] or ["en"]
-        _ocr_reader = easyocr.Reader(langs, gpu=(cfg.device == "cuda"))
+        # Keep the ~100 MB detection/recognition models next to the project
+        # (with the Chatterbox weights) instead of on the system drive.
+        model_dir = Path(__file__).resolve().parents[2] / "models" / "easyocr"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        _ocr_reader = easyocr.Reader(langs, gpu=(cfg.device == "cuda"),
+                                     model_storage_directory=str(model_dir),
+                                     verbose=False)
     pix = page.get_pixmap(dpi=cfg.ocr_dpi)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
     if pix.n == 4:      # RGBA -> RGB
