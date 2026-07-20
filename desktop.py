@@ -46,17 +46,17 @@ def _wait_until_up(url: str, timeout: float = 15.0) -> None:
 
 def main() -> None:
     port = _free_port()
-    url = f"http://{HOST}:{port}/"
+    url = f"http://{HOST}:{port}/shell"   # tab-strip shell: Ctrl+T for more tabs
 
     print(f"TTS Reader desktop -> {url}")   # visible only when run with python.exe
     server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=port, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
-    _wait_until_up(url)
+    _wait_until_up(f"http://{HOST}:{port}/")
 
     webview.create_window(
         "TTS Reader", url,
-        width=880, height=940,
-        min_size=(420, 600),
+        width=1500, height=950,       # roomy: the app now uses wide layouts
+        min_size=(520, 600),
         background_color="#0f1220",   # match the page so startup doesn't flash white
     )
     webview.start()                   # blocks until the window is closed

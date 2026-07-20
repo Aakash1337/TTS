@@ -702,6 +702,7 @@
     player.playbackRate = Number(rate.value);   // keep the live-speed setting
     download.href = audioUrl;
     resultTitle.textContent = title ? '🎧 ' + title : 'Your audio';
+    document.title = title ? title + ' — TTS Reader' : 'TTS Reader';   // desktop tab label
     outplaceholder.style.display = 'none';
     result.classList.add('show');
     if (timingsUrl) loadReadAlong(timingsUrl); else raReset();

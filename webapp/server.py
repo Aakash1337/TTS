@@ -63,6 +63,13 @@ def index() -> str:
     return (STATIC / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/shell", response_class=HTMLResponse)
+def shell() -> str:
+    """Browser-style tab strip hosting multiple app instances — used by the
+    desktop window (a real browser already has its own tabs)."""
+    return (STATIC / "tabshell.html").read_text(encoding="utf-8")
+
+
 @app.post("/api/generate")
 async def generate(
     input_type: str = Form(...),               # "text" | "url" | "pdf"

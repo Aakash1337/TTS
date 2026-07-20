@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTS Reader</title>
+<style>
+  :root {
+    --bg: #0f1220; --card: #1a1f35; --card2: #232a45; --line: #333c60;
+    --text: #eef1f8; --muted: #9aa3c4; --accent: #f7913a; --accent2: #ffb066;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column; background: var(--bg);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    overflow: hidden;
+  }
+  /* ── the tab strip ── */
+  #tabbar {
+    display: flex; align-items: center; gap: 6px; padding: 8px 10px 0;
+    background: #0b0e1a; border-bottom: 1px solid var(--line);
+    flex-shrink: 0; user-select: none; overflow-x: auto; scrollbar-width: none;
+  }
+  #tabbar::-webkit-scrollbar { display: none; }
+  .dtab {
+    display: flex; align-items: center; gap: 8px; max-width: 220px; min-width: 110px;
+    padding: 8px 12px; border-radius: 10px 10px 0 0; cursor: pointer;
+    background: transparent; color: var(--muted); font-size: 13px;
+    border: 1px solid transparent; border-bottom: none; flex-shrink: 0;
+  }
+  .dtab.active { background: var(--bg); color: var(--text); border-color: var(--line); }
+  .dtab:hover:not(.active) { background: #141830; }
+  .dtab .tl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .dtab .spk { flex-shrink: 0; font-size: 11px; }
+  .dtab .tx {
+    flex-shrink: 0; border-radius: 50%; width: 18px; height: 18px; line-height: 17px;
+    text-align: center; font-size: 12px; color: var(--muted);
+  }
+  .dtab .tx:hover { background: #39406a; color: var(--text); }
+  #newtab {
+    flex-shrink: 0; width: 30px; height: 30px; border-radius: 8px; border: none;
+    background: transparent; color: var(--muted); font-size: 19px; cursor: pointer;
+  }
+  #newtab:hover { background: var(--card2); color: var(--text); }
+  .hintkeys { margin-left: auto; color: #565f8a; font-size: 11px; white-space: nowrap; padding-right: 6px; }
+  /* ── tab content ── */
+  #frames { flex: 1; position: relative; }
+  #frames iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: none;
+    display: none; background: var(--bg);
+  }
+  #frames iframe.show { display: block; }
+</style>
+</head>
+<body>
+  <div id="tabbar">
+    <button id="newtab" title="New tab (Ctrl+T)">+</button>
+    <span class="hintkeys">Ctrl+T new · Ctrl+W close</span>
+  </div>
+  <div id="frames"></div>
+
+<script>
+  const tabbar = document.getElementById('tabbar');
+  const framesBox = document.getElementById('frames');
+  const newtabBtn = document.getElementById('newtab');
+
+  let tabs = [];        // [{id, fr, label, playing}]
+  let active = null;
+  let seq = 0;
+
+  function newTab() {
+    const id = ++seq;
+    const fr = document.createElement('iframe');
+    fr.src = '/';
+    framesBox.appendChild(fr);
+    const t = { id, fr, label: 'New tab', playing: false };
+    tabs.push(t);
+    fr.addEventListener('load', () => hookKeys(t));
+    select(id);
+  }
+
+  function select(id) {
+    active = id;
+    tabs.forEach(t => t.fr.classList.toggle('show', t.id === id));
+    renderBar();
+  }
+
+  function closeTab(id) {
+    const i = tabs.findIndex(t => t.id === id);
+    if (i < 0) return;
+    tabs[i].fr.remove();
+    tabs.splice(i, 1);
+    if (!tabs.length) return newTab();          // never zero tabs
+    if (active === id) select(tabs[Math.max(0, i - 1)].id);
+    else renderBar();
+  }
+
+  function renderBar() {
+    tabbar.querySelectorAll('.dtab').forEach(el => el.remove());
+    // tabs render before the + button
+    for (const t of tabs) {
+      const el = document.createElement('div');
+      el.className = 'dtab' + (t.id === active ? ' active' : '');
+      const spk = document.createElement('span');
+      spk.className = 'spk';
+      spk.textContent = t.playing ? '🔊' : '';
+      const tl = document.createElement('span');
+      tl.className = 'tl';
+      tl.textContent = t.label;
+      tl.title = t.label;
+      const tx = document.createElement('span');
+      tx.className = 'tx';
+      tx.textContent = '✕';
+      tx.title = 'Close tab (Ctrl+W)';
+      el.appendChild(spk); el.appendChild(tl); el.appendChild(tx);
+      el.addEventListener('click', () => select(t.id));
+      el.addEventListener('auxclick', e => { if (e.button === 1) { e.preventDefault(); closeTab(t.id); } });
+      tx.addEventListener('click', e => { e.stopPropagation(); closeTab(t.id); });
+      tabbar.insertBefore(el, newtabBtn);
+    }
+  }
+
+  // Labels + playing indicators, read straight from each tab (same origin).
+  setInterval(() => {
+    let changed = false;
+    for (const t of tabs) {
+      try {
+        const doc = t.fr.contentDocument;
+        if (!doc) continue;
+        const raw = (doc.title || '').replace(/\s*[—-]\s*TTS Reader\s*$/, '').trim();
+        const label = (raw && raw !== 'TTS Reader') ? raw : 'New tab';
+        const player = doc.getElementById('player');
+        const playing = !!(player && !player.paused && !player.ended && player.src);
+        if (label !== t.label || playing !== t.playing) {
+          t.label = label; t.playing = playing; changed = true;
+        }
+      } catch (e) { /* frame mid-navigation */ }
+    }
+    if (changed) renderBar();
+  }, 1200);
+
+  // Ctrl+T / Ctrl+W / Ctrl+Tab — registered on the shell AND inside each tab
+  // (keydown inside an iframe never reaches the parent document).
+  function onKeys(e) {
+    if (!e.ctrlKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 't') { e.preventDefault(); newTab(); }
+    else if (k === 'w') { e.preventDefault(); closeTab(active); }
+    else if (k === 'tab') {
+      e.preventDefault();
+      const i = tabs.findIndex(t => t.id === active);
+      select(tabs[(i + (e.shiftKey ? tabs.length - 1 : 1)) % tabs.length].id);
+    }
+  }
+  function hookKeys(t) {
+    try { t.fr.contentWindow.addEventListener('keydown', onKeys); } catch (e) {}
+  }
+  document.addEventListener('keydown', onKeys);
+  newtabBtn.addEventListener('click', newTab);
+
+  newTab();   // start with one tab open
+</script>
+</body>
+</html>
