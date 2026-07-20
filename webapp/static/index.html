@@ -87,8 +87,14 @@
   .ra-controls label { margin: 0; white-space: nowrap; }
   .ra-controls input[type=range] { flex: 1; }
   /* ── the read-along island: its own card, below the player ── */
-  .racard { display: none; margin-top: 18px; }
+  .racard { display: none; margin-top: 18px; position: relative; }
   .racard.show { display: block; }
+  #ratoast {
+    position: absolute; top: 14px; right: 18px; z-index: 5; pointer-events: none;
+    background: var(--accent); color: #201200; font-weight: 800; font-size: 14px;
+    padding: 6px 12px; border-radius: 8px; opacity: 0; transition: opacity .25s;
+  }
+  #ratoast.show { opacity: 1; }
   .ra-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   .ra-head h3 { margin: 0; font-size: 16px; flex: 1; }
   .ra-text {
@@ -328,6 +334,7 @@
       <div id="contentslist"></div>
     </details>
     <div class="ra-text" id="ratext"></div>
+    <div id="ratoast"></div>
   </div>
 
   <div class="card lib" id="libcard" style="display:none">
@@ -582,6 +589,35 @@
     if (!racard.classList.contains('show')) return;
     e.preventDefault();
     raSkip(e.key === 'ArrowLeft' ? -1 : 1);
+  });
+
+  // ── < / > nudge the playback speed by 0.05 (slider, label, saved setting
+  //    and the live audio all stay in sync; toast gives feedback in theater) ──
+  let raToastTimer = null;
+  function raToast(msg) {
+    const el = $('ratoast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(raToastTimer);
+    raToastTimer = setTimeout(() => el.classList.remove('show'), 900);
+  }
+  function setPlaybackRate(v) {
+    v = Math.min(2, Math.max(0.5, Math.round(v * 20) / 20));
+    rate.value = String(v);
+    rateval.textContent = v.toFixed(2) + '×';
+    player.playbackRate = v;
+    try { player.preservesPitch = true; } catch (e) {}
+    try { localStorage.setItem('tts:rate', String(v)); } catch (e) {}
+    raToast('Speed ' + v.toFixed(2) + '×');
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '<' && e.key !== '>') return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;   // shift is part of the key itself
+    const tag = (e.target.tagName || '').toUpperCase();
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'AUDIO'].includes(tag) || e.target.isContentEditable) return;
+    if (!player.src) return;
+    e.preventDefault();
+    setPlaybackRate(Number(rate.value) + (e.key === '>' ? 0.05 : -0.05));
   });
 
   function raReset() {
