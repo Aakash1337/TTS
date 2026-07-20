@@ -14,9 +14,22 @@
   body {
     margin: 0; min-height: 100vh; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
     background: radial-gradient(1200px 600px at 70% -10%, #2a1e46, transparent), var(--bg);
-    color: var(--text); display: flex; justify-content: center; padding: 32px 16px;
+    color: var(--text); display: flex; justify-content: center; padding: 32px 24px;
   }
-  .wrap { width: 100%; max-width: 720px; }
+  .wrap { width: 100%; max-width: 760px; }
+  /* Wide screens: use the space — controls left, player + read-along right. */
+  @media (min-width: 1100px) {
+    .wrap {
+      max-width: 1720px;
+      display: grid;
+      grid-template-columns: minmax(400px, 560px) minmax(0, 1fr);
+      gap: 22px;
+      align-items: start;
+    }
+    header, .lib { grid-column: 1 / -1; }
+    .outcard { position: sticky; top: 24px; }
+    .ra-text { max-height: max(340px, calc(100vh - 460px)); }
+  }
   header { text-align: center; margin-bottom: 22px; }
   header h1 { margin: 0; font-size: 30px; letter-spacing: -0.5px; }
   header p { margin: 6px 0 0; color: var(--muted); font-size: 15px; }
@@ -129,6 +142,24 @@
   .libbtn:hover { color: var(--text); border-color: var(--accent); }
   .libbtn.del:hover { color: var(--err); border-color: var(--err); }
   .libempty { color: var(--muted); font-size: 14px; padding: 12px 4px; }
+  .outcard { min-height: 120px; }
+  .outplaceholder { color: var(--muted); font-size: 14px; text-align: center; padding: 26px 10px; }
+  .jobsbar { display: none; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .jobsbar.show { display: flex; }
+  .jobchip {
+    display: flex; align-items: center; gap: 8px; padding: 6px 12px; max-width: 250px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--card2);
+    cursor: pointer; font-size: 13px; user-select: none;
+  }
+  .jobchip.sel { border-color: var(--accent); background: #2a2140; }
+  .jobchip .jt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jobchip .js { color: var(--accent2); font-size: 12px; flex-shrink: 0; font-weight: 700; }
+  .jobchip .js.ok { color: var(--ok); }
+  .jobchip .js.bad { color: var(--err); }
+  .jobchip .jx { color: var(--muted); flex-shrink: 0; padding: 0 2px; }
+  .jobchip .jx:hover { color: var(--err); }
+  #followbtn { display: none; margin-left: 14px; cursor: pointer; }
+  #followbtn.show { display: inline-block; }
   @media (max-width: 540px) {
     body { padding: 16px 10px; }
     .card { padding: 16px; }
@@ -244,6 +275,11 @@
     </div>
 
     <button class="btn gen-only" id="go">Generate audio</button>
+  </div>
+
+  <div class="card outcard" id="outcard">
+    <div class="jobsbar" id="jobsbar"></div>
+    <div class="outplaceholder" id="outplaceholder">Nothing playing yet — generate something, or pick a narration from the Library below.</div>
 
     <div class="status" id="status">
       <div class="bar"><i id="barfill"></i></div>
@@ -264,6 +300,7 @@
       </details>
       <div class="ra-text" id="ratext"></div>
       <a class="dl" id="download" download>⬇ Download MP3</a>
+      <a class="dl" id="followbtn" title="Scroll back to the word being read and follow along again">📍 Jump to current line</a>
     </div>
   </div>
 
@@ -310,25 +347,100 @@
 
   const go = $('go'), statusBox = $('status'), bar = $('barfill'), statusText = $('statustext');
   const result = $('result'), player = $('player'), download = $('download'), resultTitle = $('resulttitle');
-  const cancelBtn = $('cancel');
-  let currentJob = null, pollFailures = 0;
+  const cancelBtn = $('cancel'), jobsbar = $('jobsbar'), outplaceholder = $('outplaceholder');
+
+  // ── multi-job manager: several generations at once, switchable via chips ──
+  const jobs = new Map();     // id -> job state
+  let selectedJob = null;     // whose state the status/result panel shows
+  let playerBound = null;     // job id (or 'lib') whose audio is in the player
 
   function setStatus(msg, isErr) {
+    outplaceholder.style.display = 'none';
     statusBox.classList.add('show');
     statusText.textContent = msg;
     statusText.classList.toggle('err', !!isErr);
   }
 
-  function finishRun() {
-    go.disabled = false;
-    cancelBtn.classList.remove('show');
-    currentJob = null;
+  function playerFree() { return !player.src || player.paused || player.ended; }
+
+  function chipGlyph(st) {
+    if (st.status === 'queued') return '⏳';
+    if (st.status === 'running') return st.total ? Math.round(100 * st.done / st.total) + '%' : '…';
+    if (st.status === 'done') return '✓';
+    return '✕';
+  }
+
+  function renderChips() {
+    jobsbar.classList.toggle('show', jobs.size > 0);
+    jobsbar.innerHTML = '';
+    for (const [id, st] of jobs) {
+      const c = document.createElement('div');
+      c.className = 'jobchip' + (id === selectedJob ? ' sel' : '');
+      const g = document.createElement('span');
+      g.className = 'js' + (st.status === 'done' ? ' ok' : (st.status === 'failed' ? ' bad' : ''));
+      g.textContent = chipGlyph(st);
+      const t = document.createElement('span'); t.className = 'jt'; t.textContent = st.label;
+      const x = document.createElement('span'); x.className = 'jx'; x.textContent = '✕';
+      x.title = 'Dismiss (cancels if still running)';
+      c.appendChild(g); c.appendChild(t); c.appendChild(x);
+      c.addEventListener('click', () => selectJob(id, true));
+      x.addEventListener('click', e => { e.stopPropagation(); dismissJob(id); });
+      jobsbar.appendChild(c);
+    }
+  }
+
+  function dismissJob(id) {
+    const st = jobs.get(id);
+    if (st && (st.status === 'queued' || st.status === 'running')) {
+      fetch('/api/cancel/' + id, { method: 'POST' }).catch(() => {});
+    }
+    jobs.delete(id);
+    if (selectedJob === id) {
+      selectedJob = jobs.size ? [...jobs.keys()].pop() : null;
+      if (selectedJob) renderSelected(false);
+      else statusBox.classList.remove('show');
+    }
+    renderChips();
+  }
+
+  function selectJob(id, userClick) {
+    selectedJob = id;
+    renderChips();
+    renderSelected(!!userClick);
+  }
+
+  function renderSelected(userClick) {
+    const st = jobs.get(selectedJob);
+    if (!st) return;
+    if (st.status === 'queued') {
+      bar.style.width = '0%';
+      setStatus('Queued — will start as a slot frees up…', false);
+      cancelBtn.classList.add('show');
+    } else if (st.status === 'running') {
+      const pct = st.total ? Math.round(100 * st.done / st.total) : 0;
+      bar.style.width = pct + '%';
+      setStatus(st.total
+        ? `Generating… ${st.done} / ${st.total} chunks (${pct}%)` + (playerBound === selectedJob ? ' — preview playing' : '')
+        : 'Reading & preparing text…', false);
+      cancelBtn.classList.add('show');
+      if (st.hasPreview && playerBound !== selectedJob && (userClick || playerFree())) startPreviewFor(selectedJob);
+    } else if (st.status === 'done') {
+      bar.style.width = '100%';
+      setStatus(`Done — ${Math.floor(st.secs / 60)}m ${Math.round(st.secs % 60)}s of audio.`, false);
+      cancelBtn.classList.remove('show');
+      if (playerBound !== selectedJob && (userClick || playerFree())) showAudioFor(selectedJob);
+    } else {
+      cancelBtn.classList.remove('show');
+      const msg = st.error || 'unknown error';
+      setStatus(/^Cancelled/i.test(msg) ? 'Cancelled.' : 'Failed: ' + msg, !/^Cancelled/i.test(msg));
+    }
   }
 
   cancelBtn.addEventListener('click', () => {
-    if (!currentJob) return;
+    const st = jobs.get(selectedJob);
+    if (!st || (st.status !== 'running' && st.status !== 'queued')) return;
     cancelBtn.disabled = true;
-    fetch('/api/cancel/' + currentJob, { method: 'POST' }).catch(() => {}).finally(() => { cancelBtn.disabled = false; });
+    fetch('/api/cancel/' + selectedJob, { method: 'POST' }).catch(() => {}).finally(() => { cancelBtn.disabled = false; });
     setStatus('Cancelling…', false);
   });
 
@@ -346,6 +458,29 @@
 
   const contents = $('contents'), contentslist = $('contentslist');
 
+  // ── follow mode: auto-scroll tracks the voice until YOU scroll away ───────
+  // Scrolling to read ahead (or back) switches following off so nothing yanks
+  // the view; the 📍 button (or clicking any word) jumps back and re-follows.
+  const followBtn = $('followbtn');
+  let raFollow = true;
+  let raProgScrollAt = 0;         // when WE last scrolled (vs. the user)
+
+  function setFollow(v) {
+    raFollow = v;
+    followBtn.classList.toggle('show', !v && raWords.length > 0);
+  }
+  ratext.addEventListener('scroll', () => {
+    // smooth programmatic scrolls emit events for ~0.5s; ignore those
+    if (raFollow && Date.now() - raProgScrollAt > 800) setFollow(false);
+  });
+  followBtn.addEventListener('click', () => {
+    setFollow(true);
+    if (raLast >= 0) {
+      raProgScrollAt = Date.now();
+      raWords[raLast].el.scrollIntoView({ block: 'center' });
+    }
+  });
+
   function raReset() {
     raWords = []; raLast = -1;
     ratext.innerHTML = '';
@@ -353,6 +488,7 @@
     contentslist.innerHTML = '';
     contents.classList.remove('show');
     contents.open = false;
+    setFollow(true);
     if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; }
   }
 
@@ -389,6 +525,7 @@
       div.appendChild(ts);
       div.appendChild(document.createTextNode(e.label + '…'));
       div.addEventListener('click', () => {
+        setFollow(true);
         player.currentTime = Math.max(0, e.t + 0.02);
         player.play().catch(() => {});
       });
@@ -409,6 +546,7 @@
         span.className = 'ra-w';
         span.textContent = ch.text.slice(w.cs, w.ce);
         span.addEventListener('click', () => {       // click a word -> jump there
+          setFollow(true);                           // ...and follow from there
           player.currentTime = Math.max(0, w.s + 0.02);
           player.play().catch(() => {});
         });
@@ -433,8 +571,13 @@
         if (idx >= 0) {
           const el = raWords[idx].el;
           el.classList.add('hl');
-          const r = el.getBoundingClientRect(), br = ratext.getBoundingClientRect();
-          if (r.top < br.top + 24 || r.bottom > br.bottom - 24) el.scrollIntoView({ block: 'center' });
+          if (raFollow) {
+            const r = el.getBoundingClientRect(), br = ratext.getBoundingClientRect();
+            if (r.top < br.top + 24 || r.bottom > br.bottom - 24) {
+              raProgScrollAt = Date.now();
+              el.scrollIntoView({ block: 'center' });
+            }
+          }
         }
         raLast = idx;
       }
@@ -447,22 +590,26 @@
   player.addEventListener('seeked', () => { if (!raLoop) { raTick(); cancelAnimationFrame(raLoop); raLoop = null; } });
 
   async function generate() {
-    player.pause();                 // stop any previous narration still sounding
-    result.classList.remove('show');
-    raReset();
-    previewActive = false;
-    pendingSeek = null;
     const fd = new FormData();
     fd.append('input_type', currentTab);
+    let label = 'Narration';
     if (currentTab === 'text') {
       if (!$('text').value.trim()) return setStatus('Please paste some text first.', true);
       fd.append('text', $('text').value);
+      label = $('text').value.trim().split(/\s+/).slice(0, 5).join(' ');
     } else if (currentTab === 'url') {
       if (!$('url').value.trim()) return setStatus('Please enter a link first.', true);
-      fd.append('url', $('url').value.trim());
+      const u = $('url').value.trim();
+      fd.append('url', u);
+      try {
+        const p = new URL(u);
+        const seg = p.pathname.split('/').filter(Boolean).pop();
+        label = seg ? decodeURIComponent(seg) : p.hostname;
+      } catch (e) { label = u.slice(0, 40); }
     } else {
-      if (!fileInput.files[0]) return setStatus('Please choose a PDF first.', true);
+      if (!fileInput.files[0]) return setStatus('Please choose a PDF or EPUB first.', true);
       fd.append('file', fileInput.files[0]);
+      label = fileInput.files[0].name;
     }
     const [engine, voice] = $('voice').value.split(':');
     fd.append('engine', engine);
@@ -471,85 +618,91 @@
     fd.append('mode', $('mode').value);
     fd.append('summarize', $('summarize').checked ? 'true' : 'false');
 
-    go.disabled = true;
-    bar.style.width = '0%';
-    setStatus('Reading & preparing text…', false);
-
     let res, job_id;
     try {
       res = await fetch('/api/generate', { method: 'POST', body: fd });
-      if (!res.ok) { go.disabled = false; const j = await res.json().catch(() => ({})); return setStatus('Error: ' + (j.detail || res.statusText), true); }
+      if (!res.ok) { const j = await res.json().catch(() => ({})); return setStatus('Error: ' + (j.detail || res.statusText), true); }
       ({ job_id } = await res.json());
-    } catch (e) { go.disabled = false; return setStatus('Could not reach the server.', true); }
-    currentJob = job_id;
-    pollFailures = 0;
-    cancelBtn.classList.add('show');
-    poll(job_id);
+    } catch (e) { return setStatus('Could not reach the server.', true); }
+
+    jobs.set(job_id, { label, status: 'queued', done: 0, total: 0, secs: 0, title: '',
+                       hasPreview: false, hasTimings: false, error: null, failures: 0 });
+    // Take over the view only when nothing is actively playing — a new job must
+    // not interrupt what you're listening to; its chip is there to switch to.
+    if (selectedJob === null || playerFree()) selectJob(job_id, false);
+    else renderChips();
+    pollJob(job_id);
   }
 
-  async function poll(id) {
+  async function pollJob(id) {
+    const st = jobs.get(id);
+    if (!st) return;                              // chip was dismissed
     let s;
     try {
       s = await (await fetch('/api/status/' + id)).json();
-      pollFailures = 0;
+      st.failures = 0;
     } catch (e) {
-      if (++pollFailures > 20) {           // ~30s of failures -> give up cleanly
-        setStatus('Lost connection to the server. Is it still running?', true);
-        return finishRun();
+      if (++st.failures > 20) {                   // ~30s of failures -> give up
+        st.status = 'failed'; st.error = 'Lost connection to the server.';
+        renderChips();
+        if (selectedJob === id) renderSelected(false);
+        return;
       }
-      return setTimeout(() => poll(id), 1500);
+      return setTimeout(() => pollJob(id), 1500);
     }
 
-    if (s.status === 'queued') {
-      setStatus('Queued…', false);
-      setTimeout(() => poll(id), 1000);
-    } else if (s.status === 'running') {
-      if (s.total > 0) {
-        const pct = Math.round(100 * s.done / s.total);
-        bar.style.width = pct + '%';
-        setStatus(`Generating audio… ${s.done} / ${s.total} chunks (${pct}%)`
-                  + (previewActive ? ' — preview playing' : ''), false);
-      } else {
-        setStatus('Reading & preparing text…', false);
-      }
-      if (s.has_preview && !previewActive) startPreview(id);
-      setTimeout(() => poll(id), 1000);
+    st.status = s.status;
+    st.done = s.done || 0; st.total = s.total || 0;
+    st.hasPreview = !!s.has_preview; st.hasTimings = !!s.has_timings;
+    st.title = s.title || st.label; st.secs = s.audio_seconds || 0;
+    st.error = s.error;
+    renderChips();
+
+    if (s.status === 'queued' || s.status === 'running') {
+      if (selectedJob === id) renderSelected(false);
+      setTimeout(() => pollJob(id), 1000);
     } else if (s.status === 'done') {
-      bar.style.width = '100%';
-      const secs = Math.round(s.audio_seconds || 0);
-      setStatus(`Done — ${Math.floor(secs / 60)}m ${secs % 60}s of audio.`, false);
-      if (previewActive) pendingSeek = player.currentTime;   // keep the spot
-      previewActive = false;
-      showAudio('/api/audio/' + id, s.title, s.has_timings ? '/api/timings/' + id : null);
       refreshLibrary();
-      finishRun();
+      if (playerBound === id && String(player.src).includes('/api/preview/')) {
+        pendingSeek = player.currentTime;         // seamless preview -> final
+        showAudioFor(id);
+      }
+      if (selectedJob === id) renderSelected(false);
     } else {
-      const msg = (s.error || 'unknown error');
-      setStatus(/^Cancelled/i.test(msg) ? 'Cancelled.' : 'Failed: ' + msg, /^Cancelled/i.test(msg) ? false : true);
-      finishRun();
+      if (selectedJob === id) renderSelected(false);
     }
   }
 
   let currentAudioUrl = null;   // key for per-file resume positions
-  let previewActive = false;    // playing the early preview of a running job
   let pendingSeek = null;       // position to restore right after a src swap
 
-  function startPreview(id) {
-    previewActive = true;
+  function startPreviewFor(id) {
+    playerBound = id;
     currentAudioUrl = '/api/audio/' + id;   // save positions under the FINAL key
     player.src = '/api/preview/' + id;
     player.playbackRate = Number(rate.value);
-    resultTitle.textContent = '🎧 Preview — you can start listening while the rest generates…';
+    resultTitle.textContent = '🎧 Preview — listening while the rest generates…';
+    outplaceholder.style.display = 'none';
     result.classList.add('show');
+    raReset();
     player.play().catch(() => {});
   }
 
+  function showAudioFor(id) {
+    const st = jobs.get(id);
+    if (!st) return;
+    showAudio('/api/audio/' + id, st.title, st.hasTimings ? '/api/timings/' + id : null);
+    playerBound = id;
+  }
+
   function showAudio(audioUrl, title, timingsUrl) {
+    playerBound = 'lib';          // job callers overwrite this right after
     currentAudioUrl = audioUrl;
     player.src = audioUrl;
     player.playbackRate = Number(rate.value);   // keep the live-speed setting
     download.href = audioUrl;
     resultTitle.textContent = title ? '🎧 ' + title : 'Your audio';
+    outplaceholder.style.display = 'none';
     result.classList.add('show');
     if (timingsUrl) loadReadAlong(timingsUrl); else raReset();
     player.play().catch(() => {});

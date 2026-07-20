@@ -39,8 +39,15 @@ app = FastAPI(title="TTS Reader")
 
 # In-memory job registry (fine for a local, single-user app).
 JOBS: dict[str, dict] = {}
-_GEN_LOCK = threading.Lock()   # one generation at a time (GPU + logging safety)
+_MAX_CONCURRENT = 3
+_GEN_SEM = threading.BoundedSemaphore(_MAX_CONCURRENT)  # edge jobs may run in parallel
+_GPU_LOCK = threading.Lock()   # chatterbox is GPU-exclusive (VRAM)
 _MAX_JOBS = 40                 # prune finished registry entries beyond this
+
+# One shared logging setup for the whole server process: concurrent runs must
+# NOT each call setup_logging (it swaps the shared logger's handlers mid-run).
+from ttscore.logging_setup import setup_logging as _setup_logging
+_setup_logging(ROOT / "logs", f"webapp_{os.getpid()}")
 
 
 def _prune_jobs() -> None:
@@ -393,7 +400,7 @@ def _base_cfg() -> Config:
 def _run_job(job_id: str, src: Source, cfg: Config,
              upload_dir: Optional[Path] = None, title_fallback: str = "") -> None:
     job = JOBS[job_id]
-    with _GEN_LOCK:                       # serialize: one job on the GPU/voice at a time
+    with _GEN_SEM:                        # bound total concurrency
         if job.get("cancel"):             # cancelled while still queued
             job["status"] = "failed"
             job["error"] = "Cancelled."
@@ -409,7 +416,13 @@ def _run_job(job_id: str, src: Source, cfg: Config,
                 raise RuntimeError("Cancelled.")
 
         try:
-            report = run([src], cfg, progress=progress)
+            if cfg.engine == "chatterbox":
+                with _GPU_LOCK:           # one model on the GPU at a time
+                    report = run([src], cfg, progress=progress,
+                                 configure_logging=False)
+            else:                         # edge is network-bound: parallel is fine
+                report = run([src], cfg, progress=progress,
+                             configure_logging=False)
             res = report.jobs[-1]
             if res.status == "failed":
                 job["status"] = "failed"

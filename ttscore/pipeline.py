@@ -51,17 +51,24 @@ class Source:
 
 
 # ── public entry points ──────────────────────────────────────────────────────
-def run(sources: list[Source], cfg: Config, progress=None) -> RunReport:
+def run(sources: list[Source], cfg: Config, progress=None,
+        configure_logging: bool = True) -> RunReport:
     """Process every source with one loaded engine. Never raises on one bad source.
 
     ``progress`` is an optional callable ``progress(done, total)`` invoked as
-    chunks are synthesized (used by the web UI for a live progress bar)."""
+    chunks are synthesized (used by the web UI for a live progress bar).
+    ``configure_logging=False`` reuses the process's existing logger setup —
+    required when several runs execute concurrently (the web app), because
+    ``setup_logging`` swaps the shared logger's handlers."""
     cfg.validate()
     if cfg.mode != "auto":   # 'auto' is resolved per-source once the text is read
         cfg = _apply_mode_overrides(cfg, get_mode(cfg.mode))
 
     run_id = new_run_id()
-    log, log_file = setup_logging(cfg.log_path, run_id)
+    if configure_logging:
+        log, log_file = setup_logging(cfg.log_path, run_id)
+    else:
+        log, log_file = get_logger(), "(shared)"
     report = RunReport(run_id=run_id,
                        started_at=datetime.now().isoformat(timespec="seconds"))
     log.info("Run %s | mode=%s engine=%s device=%s | log: %s",
