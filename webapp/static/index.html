@@ -318,7 +318,9 @@
       <h3>📖 Read along</h3>
       <a class="dl" id="followbtn" style="margin-top:0"
          title="Scroll back to the word being read and follow along again">📍 Jump to current line</a>
+      <button class="libbtn" id="raprev" type="button" title="Previous line (←)">⏮</button>
       <button class="libbtn" id="raplay" type="button" title="Play / pause">⏯</button>
+      <button class="libbtn" id="ranext" type="button" title="Next line (→)">⏭</button>
       <button class="libbtn" id="theaterbtn" type="button" title="Theater mode — fullscreen reading (Esc to exit)">⛶ Theater</button>
     </div>
     <details class="contents" id="contents" style="margin-top:0">
@@ -554,8 +556,36 @@
     if (player.paused) player.play().catch(() => {}); else player.pause();
   });
 
+  // ── skip one line back / forward (the highlighter's chunk boundaries) ─────
+  let raMarks = [];               // start time of each spoken line
+  function raSkip(dir) {
+    if (!raMarks.length) return;
+    const t = player.currentTime;
+    let cur = -1;                 // the line currently being spoken
+    for (let i = 0; i < raMarks.length; i++) { if (raMarks[i] <= t + 0.05) cur = i; else break; }
+    let target = cur + dir;
+    if (dir < 0 && target < 0) target = 0;             // before the first line: restart it
+    if (target < 0 || target >= raMarks.length) return; // past the last line: nothing to do
+    setFollow(true);
+    player.currentTime = Math.max(0, raMarks[target] + 0.01);
+    player.play().catch(() => {});
+  }
+  $('raprev').addEventListener('click', () => raSkip(-1));
+  $('ranext').addEventListener('click', () => raSkip(1));
+
+  // ← / → skip lines whenever the read-along is up and you're not typing
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    const tag = (e.target.tagName || '').toUpperCase();
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'AUDIO'].includes(tag) || e.target.isContentEditable) return;
+    if (!racard.classList.contains('show')) return;
+    e.preventDefault();
+    raSkip(e.key === 'ArrowLeft' ? -1 : 1);
+  });
+
   function raReset() {
-    raWords = []; raLast = -1;
+    raWords = []; raLast = -1; raMarks = [];
     ratext.innerHTML = '';
     ratext.classList.remove('show');
     racard.classList.remove('show');
@@ -614,6 +644,7 @@
     buildContents(data);
     let p = document.createElement('p');
     for (const ch of data.chunks) {
+      if (ch.words && ch.words.length) raMarks.push(ch.words[0].s);   // line starts
       let cursor = 0;
       for (const w of (ch.words || [])) {
         if (w.cs > cursor) p.appendChild(document.createTextNode(ch.text.slice(cursor, w.cs)));
