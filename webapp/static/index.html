@@ -26,9 +26,9 @@
       gap: 22px;
       align-items: start;
     }
-    header, .lib { grid-column: 1 / -1; }
-    .outcard { position: sticky; top: 24px; }
-    .ra-text { max-height: max(340px, calc(100vh - 460px)); }
+    header, .lib, .racard { grid-column: 1 / -1; }
+    /* NOTE: no position:sticky here — a pinned card slides over/under later
+       sections while scrolling (the library-overlap bug). Normal flow only. */
   }
   header { text-align: center; margin-bottom: 22px; }
   header h1 { margin: 0; font-size: 30px; letter-spacing: -0.5px; }
@@ -86,13 +86,28 @@
   .ra-controls { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
   .ra-controls label { margin: 0; white-space: nowrap; }
   .ra-controls input[type=range] { flex: 1; }
+  /* ── the read-along island: its own card, below the player ── */
+  .racard { display: none; margin-top: 18px; }
+  .racard.show { display: block; }
+  .ra-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .ra-head h3 { margin: 0; font-size: 16px; flex: 1; }
   .ra-text {
-    display: none; margin-top: 12px; max-height: 340px; overflow-y: auto;
-    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px 18px; line-height: 1.95; font-size: 16px; scroll-behavior: smooth;
+    display: none; margin-top: 12px; max-height: 58vh; overflow-y: auto;
+    background: var(--card2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 22px; line-height: 1.95; font-size: 16px; scroll-behavior: smooth;
   }
   .ra-text.show { display: block; }
-  .ra-text p { margin: 0 0 14px; }
+  .ra-text p { max-width: 85ch; margin: 0 auto 14px; }
+  /* theater mode: the island fullscreened, bigger comfortable type */
+  .racard:fullscreen {
+    border-radius: 0; border: none; display: flex; flex-direction: column;
+    padding: 3vh 5vw; background: var(--bg); overflow: hidden;
+  }
+  .racard:fullscreen .contents { display: none; }
+  .racard:fullscreen .ra-text {
+    flex: 1; max-height: none; font-size: 21px; line-height: 2.15;
+    background: var(--card); padding: 4vh 6vw;
+  }
   .contents { display: none; margin-top: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
   .contents.show { display: block; }
   .contents summary { cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 600; user-select: none; }
@@ -294,14 +309,23 @@
         <label for="rate">Playback speed <span class="speedval" id="rateval">1.00×</span></label>
         <input type="range" id="rate" min="0.5" max="2" step="0.05" value="1">
       </div>
-      <details class="contents" id="contents">
-        <summary>☰ Contents</summary>
-        <div id="contentslist"></div>
-      </details>
-      <div class="ra-text" id="ratext"></div>
       <a class="dl" id="download" download>⬇ Download MP3</a>
-      <a class="dl" id="followbtn" title="Scroll back to the word being read and follow along again">📍 Jump to current line</a>
     </div>
+  </div>
+
+  <div class="card racard" id="racard">
+    <div class="ra-head">
+      <h3>📖 Read along</h3>
+      <a class="dl" id="followbtn" style="margin-top:0"
+         title="Scroll back to the word being read and follow along again">📍 Jump to current line</a>
+      <button class="libbtn" id="raplay" type="button" title="Play / pause">⏯</button>
+      <button class="libbtn" id="theaterbtn" type="button" title="Theater mode — fullscreen reading (Esc to exit)">⛶ Theater</button>
+    </div>
+    <details class="contents" id="contents" style="margin-top:0">
+      <summary>☰ Contents</summary>
+      <div id="contentslist"></div>
+    </details>
+    <div class="ra-text" id="ratext"></div>
   </div>
 
   <div class="card lib" id="libcard" style="display:none">
@@ -458,33 +482,83 @@
 
   const contents = $('contents'), contentslist = $('contentslist');
 
-  // ── follow mode: auto-scroll tracks the voice until YOU scroll away ───────
-  // Scrolling to read ahead (or back) switches following off so nothing yanks
-  // the view; the 📍 button (or clicking any word) jumps back and re-follows.
+  // ── follow mode: auto-scroll tracks the voice while the highlighted word ──
+  // is anywhere on screen. Small scrolls around the current line keep
+  // following; only scrolling the word FULLY out of view stops it — and
+  // scrolling back to it resumes automatically. 📍 (or clicking a word)
+  // jumps back instantly.
   const followBtn = $('followbtn');
+  const racard = $('racard'), theaterBtn = $('theaterbtn'), raplayBtn = $('raplay');
   let raFollow = true;
-  let raProgScrollAt = 0;         // when WE last scrolled (vs. the user)
+  // User scrolls are detected by their INPUT (wheel/touch/scrollbar drag), not
+  // by timing heuristics — programmatic recenters never carry these signals,
+  // so they can never be mistaken for the user scrolling away.
+  let raUserInputAt = 0, raDragging = false;
 
   function setFollow(v) {
     raFollow = v;
     followBtn.classList.toggle('show', !v && raWords.length > 0);
   }
-  ratext.addEventListener('scroll', () => {
-    // smooth programmatic scrolls emit events for ~0.5s; ignore those
-    if (raFollow && Date.now() - raProgScrollAt > 800) setFollow(false);
+
+  function hlWordVisible() {
+    if (raLast < 0 || !raWords[raLast]) return true;   // nothing highlighted yet
+    const r = raWords[raLast].el.getBoundingClientRect();
+    const b = ratext.getBoundingClientRect();
+    return r.bottom > b.top + 2 && r.top < b.bottom - 2;   // any part in view
+  }
+
+  let raEvalTimer = null;
+  function raEvalFollow() {
+    const visible = hlWordVisible();
+    if (raFollow && !visible) setFollow(false);        // word fully off-screen
+    else if (!raFollow && visible) setFollow(true);    // came back -> resume
+  }
+  // Arm the check from the INPUT events themselves (never from scroll events,
+  // whose dispatch can lag rendering): each wheel notch / touch move re-arms;
+  // the judgement runs once the gesture settles.
+  function raUserInput() {
+    raUserInputAt = Date.now();
+    clearTimeout(raEvalTimer);
+    raEvalTimer = setTimeout(raEvalFollow, 220);
+  }
+  ratext.addEventListener('wheel', raUserInput, { passive: true });
+  ratext.addEventListener('touchmove', raUserInput, { passive: true });
+  ratext.addEventListener('pointerdown', () => { raDragging = true; });     // scrollbar drag
+  window.addEventListener('pointerup', () => {
+    if (raDragging) { raDragging = false; raUserInput(); }  // judge after the drag
   });
+  ratext.addEventListener('scroll', () => {
+    // momentum/glide after the last input event: keep the session alive so the
+    // judgement happens at the true end of the user's scroll
+    if (raDragging || Date.now() - raUserInputAt < 250) raUserInput();
+  });
+
   followBtn.addEventListener('click', () => {
     setFollow(true);
-    if (raLast >= 0) {
-      raProgScrollAt = Date.now();
+    if (raLast >= 0) raWords[raLast].el.scrollIntoView({ block: 'center' });
+  });
+
+  // theater mode: fullscreen the reading island (Esc exits)
+  theaterBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else racard.requestFullscreen().catch(() => {});
+  });
+  document.addEventListener('fullscreenchange', () => {
+    theaterBtn.textContent = document.fullscreenElement ? '⛶ Exit theater' : '⛶ Theater';
+    // recenter after the geometry change so the current line stays in view
+    if (raFollow && raLast >= 0) {
       raWords[raLast].el.scrollIntoView({ block: 'center' });
     }
+  });
+  raplayBtn.addEventListener('click', () => {
+    if (player.paused) player.play().catch(() => {}); else player.pause();
   });
 
   function raReset() {
     raWords = []; raLast = -1;
     ratext.innerHTML = '';
     ratext.classList.remove('show');
+    racard.classList.remove('show');
     contentslist.innerHTML = '';
     contents.classList.remove('show');
     contents.open = false;
@@ -499,6 +573,7 @@
       if (!r.ok) return;
       buildReadAlong(await r.json());
       ratext.classList.add('show');
+      racard.classList.add('show');
     } catch (e) { /* no timings -> plain player */ }
   }
 
@@ -561,33 +636,39 @@
     if (p.childNodes.length) ratext.appendChild(p);
   }
 
-  function raTick() {
-    if (raWords.length) {
-      const t = player.currentTime;
-      let lo = 0, hi = raWords.length - 1, idx = -1;
-      while (lo <= hi) { const m = (lo + hi) >> 1; if (raWords[m].s <= t) { idx = m; lo = m + 1; } else hi = m - 1; }
-      if (idx !== raLast) {
-        if (raLast >= 0) raWords[raLast].el.classList.remove('hl');
-        if (idx >= 0) {
-          const el = raWords[idx].el;
-          el.classList.add('hl');
-          if (raFollow) {
-            const r = el.getBoundingClientRect(), br = ratext.getBoundingClientRect();
-            if (r.top < br.top + 24 || r.bottom > br.bottom - 24) {
-              raProgScrollAt = Date.now();
-              el.scrollIntoView({ block: 'center' });
-            }
+  function raTickOnce() {
+    if (!raWords.length) return;
+    const t = player.currentTime;
+    let lo = 0, hi = raWords.length - 1, idx = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (raWords[m].s <= t) { idx = m; lo = m + 1; } else hi = m - 1; }
+    if (idx !== raLast) {
+      if (raLast >= 0) raWords[raLast].el.classList.remove('hl');
+      if (idx >= 0) {
+        const el = raWords[idx].el;
+        el.classList.add('hl');
+        // don't recenter while the USER is mid-scroll — their gesture finishes
+        // first, then the settle evaluation decides whether to keep following
+        if (raFollow && !raDragging && Date.now() - raUserInputAt > 400) {
+          const r = el.getBoundingClientRect(), br = ratext.getBoundingClientRect();
+          if (r.top < br.top + 24 || r.bottom > br.bottom - 24) {
+            el.scrollIntoView({ block: 'center' });
           }
         }
-        raLast = idx;
       }
+      raLast = idx;
     }
+  }
+  function raTick() {
+    raTickOnce();
     raLoop = requestAnimationFrame(raTick);
   }
   player.addEventListener('play',   () => { if (!raLoop) raTick(); });
   player.addEventListener('pause',  () => { if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; } });
   player.addEventListener('ended',  () => { if (raLoop) { cancelAnimationFrame(raLoop); raLoop = null; } });
-  player.addEventListener('seeked', () => { if (!raLoop) { raTick(); cancelAnimationFrame(raLoop); raLoop = null; } });
+  player.addEventListener('seeked', raTickOnce);
+  // rAF is suspended in hidden/occluded windows (minimized app, background
+  // desktop tab) — timeupdate keeps firing, so the highlight never freezes.
+  player.addEventListener('timeupdate', raTickOnce);
 
   async function generate() {
     const fd = new FormData();
