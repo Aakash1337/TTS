@@ -200,6 +200,7 @@
       <div class="tab active" data-tab="text">Paste text</div>
       <div class="tab" data-tab="url">Web link</div>
       <div class="tab" data-tab="pdf">PDF / EPUB</div>
+      <div class="tab" data-tab="stt">Transcribe</div>
       <div class="tab" data-tab="dub">Dub videos</div>
     </div>
 
@@ -219,6 +220,33 @@
       <div class="filebox" id="filebox">Click to choose a PDF or EPUB (or drag one here)</div>
       <input type="file" id="file" accept=".pdf,.epub,application/pdf,application/epub+zip" style="display:none">
       <div class="hint">Ebooks (.epub) and PDFs — including scanned/image-only PDFs, which are read by OCR automatically.</div>
+    </div>
+
+    <div class="pane" data-pane="stt">
+      <div class="hint" style="margin-bottom:10px">
+        Pull the spoken words out of a video or audio file — you get the transcript as text
+        plus subtitles (.srt). Runs locally (Whisper on your GPU); the first run downloads
+        the model (~1.5 GB).
+      </div>
+      <div class="filebox" id="sttfilebox">Click to choose a video or audio file (or drag one here)</div>
+      <input type="file" id="sttfile" style="display:none"
+             accept=".mp4,.mkv,.m4v,.webm,.mov,.avi,.wmv,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus,video/*,audio/*">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer;font-weight:400;color:var(--text);font-size:14px">
+        <input type="checkbox" id="stttranslate" style="width:auto;accent-color:var(--accent)">
+        Translate to English (for foreign-language media)
+      </label>
+      <button class="btn" id="sttstart" type="button">Transcribe</button>
+      <button class="cancel" id="sttcancel" type="button">✕ Cancel transcription</button>
+      <div class="status" id="sttstatusbox">
+        <div class="bar"><i id="sttbar"></i></div>
+        <div class="statustext" id="sttstatus"></div>
+      </div>
+      <div id="sttresult" style="display:none">
+        <div class="ra-text show" id="sttout" style="max-height:300px;margin-top:14px"></div>
+        <a class="dl" id="stttxt" href="/api/transcribe/text" download>⬇ Transcript (.txt)</a>
+        <a class="dl" id="sttsrt" href="/api/transcribe/srt" download style="margin-left:14px">⬇ Subtitles (.srt)</a>
+        <a class="dl" id="sttread" style="margin-left:14px;cursor:pointer">📖 Read it aloud</a>
+      </div>
     </div>
 
     <div class="pane" data-pane="dub">
@@ -354,8 +382,9 @@
     currentTab = t.dataset.tab;
     document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
     document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.dataset.pane === currentTab));
-    // the voice/mode/generate controls belong to narration, not dubbing
-    document.querySelectorAll('.gen-only').forEach(el => el.style.display = currentTab === 'dub' ? 'none' : '');
+    // the voice/mode/generate controls belong to narration, not dubbing/transcribing
+    const hideGen = currentTab === 'dub' || currentTab === 'stt';
+    document.querySelectorAll('.gen-only').forEach(el => el.style.display = hideGen ? 'none' : '');
   }));
 
   const speed = $('speed'), speedval = $('speedval');
@@ -959,6 +988,93 @@
   $('mode').addEventListener('change', () => { try { localStorage.setItem('tts:mode', $('mode').value); } catch (e) {} });
   speed.addEventListener('change', () => { try { localStorage.setItem('tts:speed', speed.value); } catch (e) {} });
   rate.addEventListener('change', () => { try { localStorage.setItem('tts:rate', rate.value); } catch (e) {} });
+
+  // ── transcribe tab: video/audio -> transcript (local Whisper) ─────────────
+  const sttFile = $('sttfile'), sttFilebox = $('sttfilebox');
+  const sttStatus = $('sttstatus'), sttBar = $('sttbar'), sttStatusBox = $('sttstatusbox');
+  let sttPolling = false;
+
+  sttFilebox.addEventListener('click', () => sttFile.click());
+  sttFile.addEventListener('change', () => {
+    const f = sttFile.files[0];
+    sttFilebox.textContent = f ? '🎬 ' + f.name : 'Click to choose a video or audio file (or drag one here)';
+    sttFilebox.classList.toggle('has-file', !!f);
+  });
+  ['dragover', 'dragleave', 'drop'].forEach(ev => sttFilebox.addEventListener(ev, e => {
+    e.preventDefault();
+    if (ev === 'drop' && e.dataTransfer.files[0]) {
+      sttFile.files = e.dataTransfer.files;
+      sttFile.dispatchEvent(new Event('change'));
+    }
+  }));
+
+  function sttSetStatus(msg, isErr) {
+    sttStatusBox.classList.add('show');
+    sttStatus.textContent = msg;
+    sttStatus.classList.toggle('err', !!isErr);
+  }
+
+  $('sttstart').addEventListener('click', async () => {
+    if (!sttFile.files[0]) return sttSetStatus('Please choose a video or audio file first.', true);
+    const fd = new FormData();
+    fd.append('file', sttFile.files[0]);
+    fd.append('translate', $('stttranslate').checked ? 'true' : 'false');
+    $('sttstart').disabled = true;
+    $('sttresult').style.display = 'none';
+    sttBar.style.width = '0%';
+    sttSetStatus('Uploading…', false);
+    try {
+      const r = await fetch('/api/transcribe', { method: 'POST', body: fd });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.detail || r.statusText); }
+      $('sttcancel').classList.add('show');
+      sttPolling = true;
+      pollStt();
+    } catch (e) {
+      sttSetStatus('Failed to start: ' + e.message, true);
+      $('sttstart').disabled = false;
+    }
+  });
+
+  $('sttcancel').addEventListener('click', async () => {
+    sttSetStatus('Cancelling…', false);
+    try { await fetch('/api/transcribe/cancel', { method: 'POST' }); } catch (e) {}
+  });
+
+  async function pollStt() {
+    if (!sttPolling) return;
+    let s;
+    try { s = await (await fetch('/api/transcribe/status')).json(); }
+    catch (e) { return setTimeout(pollStt, 2000); }
+    if (s.status === 'running') {
+      sttBar.style.width = (s.pct || 0) + '%';
+      sttSetStatus(s.pct > 0
+        ? `Transcribing… ${s.pct}% (${s.title || ''})`
+        : 'Loading the speech model… (first run downloads it, ~1.5 GB)', false);
+      return setTimeout(pollStt, 1200);
+    }
+    sttPolling = false;
+    $('sttstart').disabled = false;
+    $('sttcancel').classList.remove('show');
+    if (s.status === 'done') {
+      sttBar.style.width = '100%';
+      sttSetStatus(`Done — language: ${s.language || '?'}. Transcript + subtitles saved to output\\transcripts.`, false);
+      $('sttout').textContent = s.text_head || '';
+      $('sttresult').style.display = 'block';
+    } else if (s.status === 'cancelled') {
+      sttSetStatus('Cancelled.', false);
+    } else {
+      sttSetStatus('Failed: ' + (s.error || 'unknown error'), true);
+    }
+  }
+
+  $('sttread').addEventListener('click', async () => {
+    try {
+      const text = await (await fetch('/api/transcribe/text')).text();
+      $('text').value = text;
+      document.querySelector('.tab[data-tab="text"]').click();
+      setStatus('Transcript loaded — pick a voice and hit Generate audio.', false);
+    } catch (e) { sttSetStatus('Could not load the transcript text.', true); }
+  });
 
   // ── dub tab: drive the AI-Dubbing pipeline ────────────────────────────────
   const dubstatusEl = $('dubstatus'), dublog = $('dublog'), dubouts = $('dubouts');

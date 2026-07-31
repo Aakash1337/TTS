@@ -266,6 +266,106 @@ def library_delete(stem: str) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+# ── Transcribe: uploaded video/audio -> transcript (local Whisper) ───────────
+from ttscore.ingest.stt import (MEDIA_EXTS, TranscribeCancelled, to_srt,
+                                transcribe_media)
+
+TRANSCRIPTS_DIR = OUTPUT_DIR / "transcripts"
+
+TR: dict = {"status": "idle", "pct": 0, "title": None, "language": None,
+            "text_path": None, "srt_path": None, "error": None, "cancel": False}
+
+
+@app.post("/api/transcribe")
+async def transcribe_start(file: UploadFile = File(...),
+                           translate: str = Form("false")) -> JSONResponse:
+    if TR["status"] == "running":
+        raise HTTPException(409, "A transcription is already in progress.")
+    name = (file.filename or "").strip()
+    if not name.lower().endswith(MEDIA_EXTS):
+        raise HTTPException(400, "Please upload a video or audio file "
+                                 f"({', '.join(e.lstrip('.') for e in MEDIA_EXTS)}).")
+
+    job_id = uuid.uuid4().hex[:12]
+    updir = UPLOAD_DIR / f"tr_{job_id}"
+    updir.mkdir(parents=True, exist_ok=True)
+    dest = updir / _safe_name(name)
+    with open(dest, "wb") as fh:
+        shutil.copyfileobj(file.file, fh)
+
+    TR.update({"status": "running", "pct": 0, "title": dest.stem,
+               "language": None, "text_path": None, "srt_path": None,
+               "error": None, "cancel": False})
+    do_translate = str(translate).lower() in ("true", "1", "on", "yes")
+    threading.Thread(target=_run_transcribe, args=(dest, updir, do_translate),
+                     daemon=True).start()
+    return JSONResponse({"ok": True})
+
+
+def _run_transcribe(media: Path, updir: Path, translate: bool) -> None:
+    cfg = _base_cfg()
+    try:
+        # Whisper on CUDA shares the GPU with chatterbox — take the same lock.
+        lock = _GPU_LOCK if cfg.device == "cuda" else threading.Lock()
+        with lock:
+            result = transcribe_media(
+                str(media), cfg, translate=translate,
+                on_progress=lambda p: TR.__setitem__("pct", int(p * 100)),
+                should_cancel=lambda: TR.get("cancel", False),
+            )
+        TRANSCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+        base = re.sub(r"[^\w.\- ]+", "_", media.stem)[:80] or "transcript"
+        txt = TRANSCRIPTS_DIR / f"{base}.txt"
+        srt = TRANSCRIPTS_DIR / f"{base}.srt"
+        txt.write_text(result["text"], encoding="utf-8")
+        srt.write_text(to_srt(result["segments"]), encoding="utf-8")
+        TR.update({"status": "done", "pct": 100, "language": result["language"],
+                   "text_path": str(txt), "srt_path": str(srt)})
+    except TranscribeCancelled:
+        TR.update({"status": "cancelled"})
+    except Exception as exc:
+        TR.update({"status": "failed", "error": str(exc)})
+    finally:
+        shutil.rmtree(updir, ignore_errors=True)
+
+
+@app.get("/api/transcribe/status")
+def transcribe_status() -> JSONResponse:
+    head = ""
+    if TR["status"] == "done" and TR["text_path"]:
+        try:
+            head = Path(TR["text_path"]).read_text(encoding="utf-8")[:4000]
+        except OSError:
+            pass
+    return JSONResponse({"status": TR["status"], "pct": TR["pct"],
+                         "title": TR["title"], "language": TR["language"],
+                         "error": TR["error"], "text_head": head})
+
+
+@app.get("/api/transcribe/text")
+def transcribe_text():
+    if TR["status"] != "done" or not TR["text_path"]:
+        raise HTTPException(404, "no transcript available")
+    return FileResponse(TR["text_path"], media_type="text/plain",
+                        filename=Path(TR["text_path"]).name)
+
+
+@app.get("/api/transcribe/srt")
+def transcribe_srt():
+    if TR["status"] != "done" or not TR["srt_path"]:
+        raise HTTPException(404, "no subtitles available")
+    return FileResponse(TR["srt_path"], media_type="text/plain",
+                        filename=Path(TR["srt_path"]).name)
+
+
+@app.post("/api/transcribe/cancel")
+def transcribe_cancel() -> JSONResponse:
+    if TR["status"] != "running":
+        raise HTTPException(409, "No transcription in progress.")
+    TR["cancel"] = True
+    return JSONResponse({"ok": True})
+
+
 # ── Dub: drive the AI-Dubbing project (its own venv, via subprocess) ─────────
 # The dubbing pipeline lives in a sibling project with a separately-pinned
 # environment; running it as a subprocess keeps the two dependency stacks

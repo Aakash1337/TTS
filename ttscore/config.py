@@ -111,6 +111,11 @@ class Config:
     ocr_language: str = "en"    # easyocr language code(s), comma-separated
     ocr_dpi: int = 200          # rasterization DPI for OCR
 
+    # ── Speech-to-text (transcribe uploaded video/audio) ─────────────────────
+    stt_model: str = "medium"
+    """faster-whisper model: tiny/base/small/medium/large-v3. 'medium' is a
+    good quality default on a real GPU (~1.5 GB one-time download)."""
+
     # ── Assembly ─────────────────────────────────────────────────────────────
     sample_rate: int = 44100    # common working + output rate; clips resample to it
     channels: int = 1           # narration is mono by nature (1 = smaller, natural)

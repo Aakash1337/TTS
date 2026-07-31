@@ -74,6 +74,13 @@ replay (with read-along), download, or delete past narrations. Long audio
 **Ebooks:** drop an **.epub** on the file tab (or `--text-file book.epub` in the
 CLI) — chapters are read in order with proper paragraph pauses.
 
+**Transcribe:** the Transcribe tab pulls the spoken words out of any video or
+audio file — locally, via Whisper (faster-whisper on the GPU; `stt_model`
+configurable, default `medium`). You get the transcript as text **and** as
+`.srt` subtitles (saved under `output/transcripts/`), an optional
+translate-to-English switch, and a one-click "Read it aloud" handoff into the
+narration flow.
+
 **Start listening immediately:** on long documents, playback begins with a
 preview as soon as ~25 s of audio exists; when generation finishes, the player
 swaps to the full file without losing your place.

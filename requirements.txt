@@ -31,6 +31,9 @@ numpy<2
 # ── Alternative engine: Microsoft online neural voices (free, no key, online) ─
 edge-tts>=6.1.0
 
+# ── Speech-to-text: transcribe uploaded video/audio (local Whisper) ──────────
+faster-whisper>=1.0.0
+
 # ── Ingest: web article extraction ────────────────────────────────────────────
 trafilatura>=1.8.0        # main-content extraction (drops nav/ads/boilerplate)
 readability-lxml>=0.8.1   # fallback extractor
